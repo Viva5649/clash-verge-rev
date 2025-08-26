@@ -204,6 +204,12 @@ pub struct IVerge {
     /// 启用外部控制器
     pub enable_external_controller: Option<bool>,
 
+    /// 启动时自动导入的订阅URL列表
+    pub startup_import_urls: Option<Vec<String>>,
+
+    /// 启动时是否启用自动导入订阅
+    pub enable_startup_import: Option<bool>,
+
     /// 服务状态跟踪
     pub service_state: Option<crate::core::service::ServiceState>,
 }
@@ -403,6 +409,8 @@ impl IVerge {
             home_cards: None,
             service_state: None,
             enable_external_controller: Some(false),
+            startup_import_urls: Some(vec!["https://lzd-client-model.oss-ap-southeast-1.aliyuncs.com/Qwen2/clash_config_2.yaml".to_string()]),
+            enable_startup_import: Some(true),
             ..Self::default()
         }
     }
@@ -491,6 +499,8 @@ impl IVerge {
         patch!(home_cards);
         patch!(service_state);
         patch!(enable_external_controller);
+        patch!(startup_import_urls);
+        patch!(enable_startup_import);
     }
 
     /// 在初始化前尝试拿到单例端口的值

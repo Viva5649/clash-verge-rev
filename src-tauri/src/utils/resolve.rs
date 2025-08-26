@@ -212,6 +212,9 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
     logging!(trace, Type::System, true, "初始化热键...");
     logging_error!(Type::System, true, hotkey::Hotkey::global().init());
 
+    // 启动时自动导入订阅URL
+    auto_import_startup_urls().await;
+
     let elapsed = start_time.elapsed();
     logging!(
         info,
@@ -751,3 +754,138 @@ pub async fn restore_public_dns() {
         }
     }
 }
+
+/// 启动时自动导入订阅URL
+pub async fn auto_import_startup_urls() {
+    // 提取所需的配置值，避免跨await持有锁
+    let (enable_startup_import, urls) = {
+        let verge = Config::verge();
+        let verge_config = verge.latest_ref();
+        
+        let enable_startup_import = verge_config.enable_startup_import.unwrap_or(false);
+        let urls = verge_config.startup_import_urls.clone().unwrap_or_default();
+        
+        (enable_startup_import, urls)
+    };
+    
+    // 检查是否启用了启动时自动导入
+    if !enable_startup_import {
+        logging!(debug, Type::Config, true, "启动时自动导入功能未启用");
+        return;
+    }
+
+    // 检查URL列表
+    if urls.is_empty() {
+        logging!(debug, Type::Config, true, "没有配置启动时自动导入的URL");
+        return;
+    }
+
+    logging!(info, Type::Config, true, "开始启动时自动导入订阅，共{}个URL", urls.len());
+
+    let mut success_count = 0;
+    let mut failed_count = 0;
+
+    for (index, url) in urls.iter().enumerate() {
+        if url.trim().is_empty() {
+            continue;
+        }
+
+        logging!(info, Type::Config, true, "正在导入第{}个订阅: {}", index + 1, url);
+        
+        // 尝试导入，最多重试2次
+        let mut retry_count = 0;
+        let max_retries = 2;
+        
+        loop {
+            match import_subscription_from_url(url.clone(), None).await {
+                Ok(uid) => {
+                    logging!(info, Type::Config, true, "成功导入订阅: {} (UID: {})", url, uid);
+                    success_count += 1;
+                    break;
+                }
+                Err(e) => {
+                    retry_count += 1;
+                    if retry_count <= max_retries {
+                        logging!(warn, Type::Config, true, "导入订阅失败，第{}次重试: {} - {}", retry_count, url, e);
+                        // 等待1秒后重试
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    } else {
+                        logging!(error, Type::Config, true, "导入订阅最终失败: {} - {}", url, e);
+                        handle::Handle::notice_message("startup_import_error", format!("订阅导入失败: {}", url));
+                        failed_count += 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if success_count > 0 || failed_count > 0 {
+        let summary = format!("启动导入完成: 成功{}个, 失败{}个", success_count, failed_count);
+        logging!(info, Type::Config, true, "{}", summary);
+        // // 发送总结通知
+        // handle::Handle::notice_message("startup_import_summary", summary);
+    }
+
+    logging!(info, Type::Config, true, "启动时自动导入订阅完成");
+}
+
+/// 从URL导入订阅配置
+/// 复用resolve_scheme中的逻辑，但简化为直接处理URL
+async fn import_subscription_from_url(url: String, name: Option<String>) -> Result<String> {
+    logging!(info, Type::Config, true, "开始从URL导入订阅: {}", url);
+
+    // 检查是否已存在相同URL的订阅
+    let existing_uid = {
+        let profiles_config = Config::profiles();
+        let profiles = profiles_config.latest_ref();
+        if let Some(items) = profiles.get_items() {
+            for item in items {
+                if let Some(existing_url) = &item.url {
+                    if existing_url == &url {
+                        logging!(info, Type::Config, true, "订阅URL已存在，跳过导入: {}", url);
+                        if let Some(uid) = &item.uid {
+                            return Ok(uid.clone());
+                        }
+                    }
+                }
+            }
+        }
+        None::<String>
+    };
+    
+    // 如果找到了现有的UID，直接返回
+    if let Some(uid) = existing_uid {
+        return Ok(uid);
+    }
+
+    // 使用PrfItem::from_url创建配置项
+    match PrfItem::from_url(url.as_ref(), name, None, None).await {
+        Ok(item) => {
+            let uid = match item.uid.clone() {
+                Some(uid) => uid,
+                None => {
+                    logging!(error, Type::Config, true, "配置项缺少UID");
+                    bail!("Profile item missing UID");
+                }
+            };
+
+            // 添加到配置中
+            let _ = wrap_err!(Config::profiles().data_mut().append_item(item));
+            
+            logging!(info, Type::Config, true, "成功导入订阅配置，UID: {}", uid);
+            Ok(uid)
+        }
+        Err(e) => {
+            logging!(error, Type::Config, true, "从URL创建配置项失败: {}", e);
+            Err(e)
+        }
+    }
+}
+
+// /// 测试启动时自动导入订阅功能
+// pub async fn test_auto_import_startup_urls() -> Result<()> {
+//     logging!(info, Type::Config, true, "手动测试启动时自动导入订阅功能");
+//     auto_import_startup_urls().await;
+//     Ok(())
+// }

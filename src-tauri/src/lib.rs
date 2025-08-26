@@ -376,6 +376,7 @@ mod app_init {
             // Verge configuration
             cmd::get_verge_config,
             cmd::patch_verge_config,
+            // cmd::test_startup_import,
             cmd::test_delay,
             cmd::get_app_dir,
             cmd::copy_icon_file,
