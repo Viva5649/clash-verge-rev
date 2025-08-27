@@ -8,7 +8,7 @@ use crate::{
     logging, logging_error,
     module::lightweight::{self, auto_lightweight_mode_init},
     process::AsyncHandler,
-    utils::{init, logging::Type, server},
+    utils::{dirs::app_profiles_dir, init, logging::Type, server},
     wrap_err,
 };
 use anyhow::{bail, Result};
@@ -851,6 +851,36 @@ pub async fn auto_import_startup_urls() {
             match import_subscription_from_url(url.clone(), None).await {
                 Ok(uid) => {
                     logging!(info, Type::Config, true, "成功导入订阅: {} (UID: {})", url, uid);
+                    
+                    // 验证导入的配置
+                    {
+                        let profiles_config = Config::profiles();
+                        let profiles = profiles_config.latest_ref();
+                        if let Ok(item) = profiles.get_item(&uid) {
+                            logging!(info, Type::Config, true, "验证导入配置: name={:?}, file={:?}, type={:?}", 
+                                item.name, item.file, item.itype);
+                            
+                            // 检查配置文件是否存在
+                            if let Some(file) = &item.file {
+                                let config_path = app_profiles_dir().unwrap_or_default().join(file);
+                                if config_path.exists() {
+                                    if let Ok(content) = std::fs::read_to_string(&config_path) {
+                                        let lines: Vec<&str> = content.lines().collect();
+                                        let proxy_count = lines.iter().filter(|line| line.contains("name:") || line.contains("server:")).count();
+                                        logging!(info, Type::Config, true, "配置文件验证: 路径={:?}, 大小={}字节, 行数={}, 疑似代理数={}", 
+                                            config_path, content.len(), lines.len(), proxy_count);
+                                    } else {
+                                        logging!(warn, Type::Config, true, "无法读取配置文件内容: {:?}", config_path);
+                                    }
+                                } else {
+                                    logging!(warn, Type::Config, true, "配置文件不存在: {:?}", config_path);
+                                }
+                            }
+                        } else {
+                            logging!(warn, Type::Config, true, "无法验证导入的配置: {}", uid);
+                        }
+                    }
+                    
                     success_count += 1;
                     last_successful_uid = Some(uid);
                     break;
@@ -887,9 +917,15 @@ pub async fn auto_import_startup_urls() {
             // 延迟执行配置切换，确保核心已完全启动
             let switch_uid = uid.clone();
             AsyncHandler::spawn(move || async move {
+                logging!(info, Type::Config, true, "启动异步配置切换任务: {}", switch_uid);
+                 
+                // 记录初始状态
+                let initial_core_mode = CoreManager::global().get_running_mode();
+                logging!(info, Type::Config, true, "异步任务开始时核心状态: {:?}", initial_core_mode);
+                 
                 // 等待核心启动完成
                 wait_for_core_ready().await;
-                 
+                
                 logging!(info, Type::Config, true, "核心已就绪，开始切换到配置: {}", switch_uid);
                  
                 match switch_to_profile_with_retry(switch_uid.clone(), 3).await {
@@ -968,14 +1004,29 @@ async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<(
     let mut attempts = 0;
     let mut last_error = None;
     
+    logging!(info, Type::Config, true, "开始带重试的配置切换: {}, 最大重试次数: {}", uid, max_retries);
+    
     while attempts < max_retries {
         attempts += 1;
         
         logging!(info, Type::Config, true, "尝试切换配置 (第{}次): {}", attempts, uid);
         
+        // 在每次尝试前检查核心状态
+        let core_mode = CoreManager::global().get_running_mode();
+        logging!(info, Type::Config, true, "重试前核心状态: {:?}", core_mode);
+        
         match switch_to_profile(uid.clone()).await {
             Ok(_) => {
                 logging!(info, Type::Config, true, "配置切换成功 (第{}次尝试): {}", attempts, uid);
+                
+                // 验证切换结果
+                {
+                    let profiles_config = Config::profiles();
+                    let profiles = profiles_config.latest_ref();
+                    let current = profiles.get_current();
+                    logging!(info, Type::Config, true, "重试成功后验证当前配置: {:?}", current);
+                }
+                
                 return Ok(());
             }
             Err(e) => {
@@ -987,6 +1038,8 @@ async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<(
                     let delay = std::time::Duration::from_secs(1 * attempts as u64);
                     logging!(info, Type::Config, true, "等待{}秒后重试...", delay.as_secs());
                     tokio::time::sleep(delay).await;
+                } else {
+                    logging!(error, Type::Config, true, "已达到最大重试次数: {}", max_retries);
                 }
             }
         }
@@ -1010,12 +1063,30 @@ async fn switch_to_profile(uid: String) -> Result<()> {
     {
         let profiles_config = Config::profiles();
         let profiles = profiles_config.latest_ref();
-        profiles.get_item(&uid)?; // 如果配置不存在会返回错误
+        match profiles.get_item(&uid) {
+            Ok(item) => {
+                logging!(info, Type::Config, true, "找到目标配置: name={:?}, file={:?}", item.name, item.file);
+            }
+            Err(e) => {
+                logging!(error, Type::Config, true, "配置不存在: {} - {}", uid, e);
+                return Err(e);
+            }
+        }
+    }
+    
+    // 记录当前配置状态
+    {
+        let profiles_config = Config::profiles();
+        let profiles = profiles_config.latest_ref();
+        let current = profiles.get_current();
+        logging!(info, Type::Config, true, "当前配置: {:?}, 目标配置: {}", current, uid);
     }
     
     // 创建切换配置的请求
     let mut profiles_patch = IProfiles::default();
     profiles_patch.current = Some(uid.clone());
+    
+    logging!(info, Type::Config, true, "开始执行配置切换...");
     
     // 执行配置切换
     match patch_profiles_config(profiles_patch).await {
@@ -1023,19 +1094,51 @@ async fn switch_to_profile(uid: String) -> Result<()> {
             if success {
                 logging!(info, Type::Config, true, "配置切换成功: {}", uid);
                 
+                // 验证配置是否真的切换了
+                {
+                    let profiles_config = Config::profiles();
+                    let profiles = profiles_config.latest_ref();
+                    let new_current = profiles.get_current();
+                    logging!(info, Type::Config, true, "切换后当前配置: {:?}", new_current);
+                    
+                    if new_current.as_ref() == Some(&uid) {
+                        logging!(info, Type::Config, true, "配置切换验证成功");
+                    } else {
+                        logging!(warn, Type::Config, true, "配置切换验证失败: 期望={}, 实际={:?}", uid, new_current);
+                    }
+                }
+                
                 // 检查核心状态，只有在核心运行时才更新配置
                 let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
+                logging!(info, Type::Config, true, "核心运行状态: {:?}", CoreManager::global().get_running_mode());
+                
                 if core_running {
                     logging!(info, Type::Config, true, "核心已运行，更新核心配置以同步代理节点");
                     match CoreManager::global().update_config().await {
-                        Ok((true, _)) => {
-                            logging!(info, Type::Config, true, "核心配置更新成功");
+                        Ok((true, msg)) => {
+                            logging!(info, Type::Config, true, "核心配置更新成功: {}", msg);
                         }
                         Ok((false, msg)) => {
                             logging!(warn, Type::Config, true, "核心配置更新失败: {}", msg);
                         }
                         Err(e) => {
                             logging!(warn, Type::Config, true, "核心配置更新出错，但不影响配置切换: {}", e);
+                        }
+                    }
+                    
+                    // 测试获取代理信息
+                    logging!(info, Type::Config, true, "测试获取代理信息...");
+                    match IpcManager::global().get_proxies().await {
+                        Ok(proxies) => {
+                            let proxy_info = if let Some(obj) = proxies.as_object() {
+                                format!("获取到代理对象，包含{}个字段", obj.len())
+                            } else {
+                                format!("获取到代理信息: {}", proxies.to_string().len())
+                            };
+                            logging!(info, Type::Config, true, "成功获取代理信息: {}", proxy_info);
+                        }
+                        Err(e) => {
+                            logging!(warn, Type::Config, true, "获取代理信息失败: {}", e);
                         }
                     }
                 } else {
@@ -1050,6 +1153,8 @@ async fn switch_to_profile(uid: String) -> Result<()> {
                 // 更新系统托盘
                 if let Err(e) = tray::Tray::global().update_menu() {
                     logging!(warn, Type::Config, true, "更新托盘菜单失败: {}", e);
+                } else {
+                    logging!(info, Type::Config, true, "托盘菜单更新成功");
                 }
                 
                 Ok(())
@@ -1075,10 +1180,13 @@ async fn wait_for_core_ready() {
     
     while elapsed < max_wait_time * 1000 {
         let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
+        let running_mode = CoreManager::global().get_running_mode();
+        
+        logging!(debug, Type::Config, true, "核心状态检查: mode={:?}, running={}", running_mode, core_running);
         
         if core_running {
             // 核心已启动，再等待一小段时间确保IPC连接建立
-            logging!(info, Type::Config, true, "核心已启动，等待IPC连接建立...");
+            logging!(info, Type::Config, true, "核心已启动(模式: {:?})，等待IPC连接建立...", running_mode);
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             
             // 测试IPC连接是否可用
@@ -1088,10 +1196,17 @@ async fn wait_for_core_ready() {
             } else {
                 logging!(warn, Type::Config, true, "核心连接测试失败，继续等待...");
             }
+        } else {
+            logging!(debug, Type::Config, true, "核心尚未启动，继续等待... (已等待{}ms)", elapsed);
         }
         
         tokio::time::sleep(tokio::time::Duration::from_millis(check_interval)).await;
         elapsed += check_interval;
+        
+        // 每5秒输出一次等待状态
+        if elapsed % 5000 == 0 {
+            logging!(info, Type::Config, true, "仍在等待核心启动... (已等待{}秒)", elapsed / 1000);
+        }
     }
     
     logging!(warn, Type::Config, true, "等待核心启动超时({}秒)，继续执行配置切换", max_wait_time);
@@ -1099,21 +1214,28 @@ async fn wait_for_core_ready() {
 
 /// 测试核心连接是否可用
 async fn test_core_connection() -> bool {
+    logging!(debug, Type::Config, true, "开始测试核心连接...");
+    
     // 尝试获取代理信息来测试IPC连接
     match tokio::time::timeout(
         tokio::time::Duration::from_secs(3),
         IpcManager::global().get_proxies()
     ).await {
-        Ok(Ok(_)) => {
-            logging!(debug, Type::Config, true, "核心连接测试成功");
+        Ok(Ok(proxies)) => {
+            let proxy_count = if let Some(obj) = proxies.as_object() {
+                obj.len()
+            } else {
+                0
+            };
+            logging!(info, Type::Config, true, "核心连接测试成功，获取到代理对象包含{}个字段", proxy_count);
             true
         }
         Ok(Err(e)) => {
-            logging!(debug, Type::Config, true, "核心连接测试失败: {}", e);
+            logging!(warn, Type::Config, true, "核心连接测试失败: {}", e);
             false
         }
         Err(_) => {
-            logging!(debug, Type::Config, true, "核心连接测试超时");
+            logging!(warn, Type::Config, true, "核心连接测试超时(3秒)");
             false
         }
     }
