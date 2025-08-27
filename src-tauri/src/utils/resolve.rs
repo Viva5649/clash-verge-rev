@@ -3,6 +3,7 @@ use crate::AppHandleManager;
 use crate::{
     config::{Config, PrfItem},
     core::*,
+    ipc::IpcManager,
     logging, logging_error,
     module::lightweight::{self, auto_lightweight_mode_init},
     process::AsyncHandler,
@@ -850,7 +851,7 @@ pub async fn auto_import_startup_urls() {
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     } else {
                         logging!(error, Type::Config, true, "导入订阅最终失败: {} - {}", url, e);
-                        handle::Handle::notice_message("startup_import_error", format!("订阅导入失败: {}", url));
+                        // handle::Handle::notice_message("startup_import_error", format!("订阅导入失败: {}", url));
                         failed_count += 1;
                         break;
                     }
@@ -874,11 +875,11 @@ pub async fn auto_import_startup_urls() {
             // 延迟执行配置切换，确保核心已完全启动
             let switch_uid = uid.clone();
             AsyncHandler::spawn(move || async move {
-                // 等待2秒，确保核心启动完成
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                
-                logging!(info, Type::Config, true, "开始延迟切换到配置: {}", switch_uid);
-                
+                // 等待核心启动完成
+                wait_for_core_ready().await;
+                 
+                logging!(info, Type::Config, true, "核心已就绪，开始切换到配置: {}", switch_uid);
+                 
                 match switch_to_profile_with_retry(switch_uid.clone(), 3).await {
                     Ok(_) => {
                         logging!(info, Type::Config, true, "成功切换到配置: {}", switch_uid);
@@ -1010,18 +1011,23 @@ async fn switch_to_profile(uid: String) -> Result<()> {
             if success {
                 logging!(info, Type::Config, true, "配置切换成功: {}", uid);
                 
-                // 强制更新核心配置，确保代理节点同步
-                logging!(info, Type::Config, true, "强制更新核心配置以同步代理节点");
-                match CoreManager::global().update_config().await {
-                    Ok((true, _)) => {
-                        logging!(info, Type::Config, true, "核心配置更新成功");
+                // 检查核心状态，只有在核心运行时才更新配置
+                let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
+                if core_running {
+                    logging!(info, Type::Config, true, "核心已运行，更新核心配置以同步代理节点");
+                    match CoreManager::global().update_config().await {
+                        Ok((true, _)) => {
+                            logging!(info, Type::Config, true, "核心配置更新成功");
+                        }
+                        Ok((false, msg)) => {
+                            logging!(warn, Type::Config, true, "核心配置更新失败: {}", msg);
+                        }
+                        Err(e) => {
+                            logging!(warn, Type::Config, true, "核心配置更新出错，但不影响配置切换: {}", e);
+                        }
                     }
-                    Ok((false, msg)) => {
-                        logging!(warn, Type::Config, true, "核心配置更新失败: {}", msg);
-                    }
-                    Err(e) => {
-                        logging!(error, Type::Config, true, "核心配置更新出错: {}", e);
-                    }
+                } else {
+                    logging!(info, Type::Config, true, "核心未运行，跳过配置更新，将在核心启动后自动同步");
                 }
                 
                 // 确保前端配置已更新并刷新显示
@@ -1047,6 +1053,59 @@ async fn switch_to_profile(uid: String) -> Result<()> {
     }
 }
 
+/// 等待核心完全启动并就绪
+async fn wait_for_core_ready() {
+    let max_wait_time = 30; // 最多等待30秒
+    let check_interval = 500; // 每500ms检查一次
+    let mut elapsed = 0;
+    
+    logging!(info, Type::Config, true, "等待核心启动完成...");
+    
+    while elapsed < max_wait_time * 1000 {
+        let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
+        
+        if core_running {
+            // 核心已启动，再等待一小段时间确保IPC连接建立
+            logging!(info, Type::Config, true, "核心已启动，等待IPC连接建立...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            
+            // 测试IPC连接是否可用
+            if test_core_connection().await {
+                logging!(info, Type::Config, true, "核心连接测试成功，核心已完全就绪");
+                return;
+            } else {
+                logging!(warn, Type::Config, true, "核心连接测试失败，继续等待...");
+            }
+        }
+        
+        tokio::time::sleep(tokio::time::Duration::from_millis(check_interval)).await;
+        elapsed += check_interval;
+    }
+    
+    logging!(warn, Type::Config, true, "等待核心启动超时({}秒)，继续执行配置切换", max_wait_time);
+}
+
+/// 测试核心连接是否可用
+async fn test_core_connection() -> bool {
+    // 尝试获取代理信息来测试IPC连接
+    match tokio::time::timeout(
+        tokio::time::Duration::from_secs(3),
+        IpcManager::global().get_proxies()
+    ).await {
+        Ok(Ok(_)) => {
+            logging!(debug, Type::Config, true, "核心连接测试成功");
+            true
+        }
+        Ok(Err(e)) => {
+            logging!(debug, Type::Config, true, "核心连接测试失败: {}", e);
+            false
+        }
+        Err(_) => {
+            logging!(debug, Type::Config, true, "核心连接测试超时");
+            false
+        }
+    }
+}
 // /// 测试启动时自动导入订阅功能
 // pub async fn test_auto_import_startup_urls() -> Result<()> {
 //     logging!(info, Type::Config, true, "手动测试启动时自动导入订阅功能");
