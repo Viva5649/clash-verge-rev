@@ -808,14 +808,15 @@ pub async fn restore_public_dns() {
 /// 
 pub async fn auto_import_startup_urls() {
     // 提取所需的配置值，避免跨await持有锁
-    let (enable_startup_import, urls) = {
+    let (enable_startup_import, urls, is_first_startup) = {
         let verge = Config::verge();
         let verge_config = verge.latest_ref();
         
         let enable_startup_import = verge_config.enable_startup_import.unwrap_or(false);
         let urls = verge_config.startup_import_urls.clone().unwrap_or_default();
+        let is_first_startup = verge_config.is_first_startup.unwrap_or(true);
         
-        (enable_startup_import, urls)
+        (enable_startup_import, urls, is_first_startup)
     };
     
     // 检查是否启用了启动时自动导入
@@ -828,6 +829,11 @@ pub async fn auto_import_startup_urls() {
     if urls.is_empty() {
         logging!(debug, Type::Config, true, "没有配置启动时自动导入的URL");
         return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if is_first_startup {
+        logging!(info, Type::Config, true, "检测到Windows端首次启动，将在导入配置后重启应用");
     }
 
     logging!(info, Type::Config, true, "开始启动时自动导入订阅，共{}个URL", urls.len());
@@ -909,25 +915,76 @@ pub async fn auto_import_startup_urls() {
         // handle::Handle::notice_message("startup_import_summary", summary);
     }
 
-    // 切换到最后一个成功导入的配置
+    // 处理导入成功后的逻辑
     if last_successful_uid.is_some() {
         if let Some(uid) = last_successful_uid {
-            logging!(info, Type::Config, true, "准备切换到最新导入的配置: {}", uid);
+            logging!(info, Type::Config, true, "准备处理最新导入的配置: {}", uid);
             
+            // Windows端首次启动特殊处理
+            #[cfg(target_os = "windows")]
+            if is_first_startup {
+                logging!(info, Type::Config, true, "Windows端首次启动，导入配置完成后将重启应用");
+                
+                // 设置当前配置并标记非首次启动
+                let profiles_patch = crate::config::IProfiles {
+                    current: Some(uid.clone()),
+                    items: None,
+                };
+                
+                let verge_patch = crate::config::IVerge {
+                    is_first_startup: Some(false),
+                    ..Default::default()
+                };
+                
+                // 应用配置更改
+                if let Ok(_) = Config::profiles().draft_mut().patch_config(profiles_patch) {
+                    Config::profiles().apply();
+                    logging!(info, Type::Config, true, "已设置当前配置为: {}", uid);
+                    
+                    // 保存配置文件
+                    let _ = Config::profiles().data_mut().save_file();
+                }
+                
+                // 更新首次启动标记
+                if let Ok(_) = Config::verge().draft_mut().patch_config(verge_patch) {
+                    Config::verge().apply();
+                    let _ = Config::verge().data_mut().save_file();
+                    logging!(info, Type::Config, true, "已标记为非首次启动");
+                }
+                
+                // 延迟重启应用
+                AsyncHandler::spawn(move || async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                    logging!(info, Type::Config, true, "Windows端首次启动配置导入完成，正在重启应用...");
+                    
+                    if let Some(app_handle) = handle::Handle::global().app_handle() {
+                        if let Err(e) = app_handle.restart() {
+                            logging!(error, Type::Config, true, "重启应用失败: {}", e);
+                        } else {
+                            logging!(info, Type::Config, true, "应用重启命令已发送");
+                        }
+                    } else {
+                        logging!(error, Type::Config, true, "无法获取应用句柄，重启失败");
+                    }
+                });
+                
+                return; // 首次启动重启后直接返回
+            }
+                
             // 延迟执行配置切换，确保核心已完全启动
             let switch_uid = uid.clone();
             AsyncHandler::spawn(move || async move {
                 logging!(info, Type::Config, true, "启动异步配置切换任务: {}", switch_uid);
-                 
+
                 // 记录初始状态
                 let initial_core_mode = CoreManager::global().get_running_mode();
                 logging!(info, Type::Config, true, "异步任务开始时核心状态: {:?}", initial_core_mode);
-                 
+                
                 // 等待核心启动完成
                 wait_for_core_ready().await;
                 
                 logging!(info, Type::Config, true, "核心已就绪，开始切换到配置: {}", switch_uid);
-                 
+                
                 match switch_to_profile_with_retry(switch_uid.clone(), 3).await {
                     Ok(_) => {
                         logging!(info, Type::Config, true, "成功切换到配置: {}", switch_uid);
