@@ -1143,7 +1143,7 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
     // 检查是否是管理员模式（Windows下可能不支持）
     #[cfg(target_os = "windows")]
     {
-        if crate::utils::help::is_admin() {
+        if check_is_admin() {
             logging!(
                 info,
                 Type::Setup,
@@ -1251,6 +1251,17 @@ fn check_platform_autostart_support() -> bool {
         );
         false
     }
+}
+
+/// 检查是否以管理员身份运行（内部使用版本）
+#[cfg(target_os = "windows")]
+fn check_is_admin() -> bool {
+    use deelevate::{PrivilegeLevel, Token};
+    
+    Token::with_current_process()
+        .and_then(|token| token.privilege_level())
+        .map(|level| level != PrivilegeLevel::NotPrivileged)
+        .unwrap_or(false)
 }
 
 // /// 测试启动时自动导入订阅功能
