@@ -869,18 +869,27 @@ pub async fn auto_import_startup_urls() {
     // 切换到最后一个成功导入的配置
     if last_successful_uid.is_some() {
         if let Some(uid) = last_successful_uid {
-            logging!(info, Type::Config, true, "启用了自动切换，正在切换到最新导入的配置: {}", uid);
+            logging!(info, Type::Config, true, "准备切换到最新导入的配置: {}", uid);
             
-            match switch_to_profile(uid.clone()).await {
-                Ok(_) => {
-                    logging!(info, Type::Config, true, "成功切换到配置: {}", uid);
-                    handle::Handle::notice_message("startup_import_switched", format!("已切换到最新导入的配置: {}", uid));
+            // 延迟执行配置切换，确保核心已完全启动
+            let switch_uid = uid.clone();
+            AsyncHandler::spawn(move || async move {
+                // 等待2秒，确保核心启动完成
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                
+                logging!(info, Type::Config, true, "开始延迟切换到配置: {}", switch_uid);
+                
+                match switch_to_profile_with_retry(switch_uid.clone(), 3).await {
+                    Ok(_) => {
+                        logging!(info, Type::Config, true, "成功切换到配置: {}", switch_uid);
+                        // handle::Handle::notice_message("startup_import_switched", format!("已切换到最新导入的配置"));
+                    }
+                    Err(e) => {
+                        logging!(error, Type::Config, true, "切换到配置失败: {} - {}", switch_uid, e);
+                        // handle::Handle::notice_message("startup_import_switch_error", format!("切换配置失败: {}", e));
+                    }
                 }
-                Err(e) => {
-                    logging!(error, Type::Config, true, "切换到配置失败: {} - {}", uid, e);
-                    handle::Handle::notice_message("startup_import_switch_error", format!("切换配置失败: {}", e));
-                }
-            }
+            });
         }
     }
 
@@ -940,6 +949,42 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
     }
 }
 
+/// 带重试机制的配置切换函数
+/// 确保在核心启动完成后能成功切换配置
+async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<()> {
+    let mut attempts = 0;
+    let mut last_error = None;
+    
+    while attempts < max_retries {
+        attempts += 1;
+        
+        logging!(info, Type::Config, true, "尝试切换配置 (第{}次): {}", attempts, uid);
+        
+        match switch_to_profile(uid.clone()).await {
+            Ok(_) => {
+                logging!(info, Type::Config, true, "配置切换成功 (第{}次尝试): {}", attempts, uid);
+                return Ok(());
+            }
+            Err(e) => {
+                last_error = Some(e);
+                logging!(warn, Type::Config, true, "配置切换失败 (第{}次尝试): {} - {}", attempts, uid, last_error.as_ref().unwrap());
+                
+                if attempts < max_retries {
+                    // 等待一段时间后重试
+                    let delay = std::time::Duration::from_secs(1 * attempts as u64);
+                    logging!(info, Type::Config, true, "等待{}秒后重试...", delay.as_secs());
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+    
+    // 所有重试都失败了
+    let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("未知错误"));
+    logging!(error, Type::Config, true, "配置切换最终失败，已重试{}次: {} - {}", max_retries, uid, final_error);
+    Err(final_error)
+}
+
 /// 切换到指定的配置文件
 /// 复用现有的配置切换逻辑
 async fn switch_to_profile(uid: String) -> Result<()> {
@@ -963,7 +1008,32 @@ async fn switch_to_profile(uid: String) -> Result<()> {
     match patch_profiles_config(profiles_patch).await {
         Ok(success) => {
             if success {
-                logging!(info, Type::Config, true, "成功切换到配置: {}", uid);
+                logging!(info, Type::Config, true, "配置切换成功: {}", uid);
+                
+                // 强制更新核心配置，确保代理节点同步
+                logging!(info, Type::Config, true, "强制更新核心配置以同步代理节点");
+                match CoreManager::global().update_config().await {
+                    Ok((true, _)) => {
+                        logging!(info, Type::Config, true, "核心配置更新成功");
+                    }
+                    Ok((false, msg)) => {
+                        logging!(warn, Type::Config, true, "核心配置更新失败: {}", msg);
+                    }
+                    Err(e) => {
+                        logging!(error, Type::Config, true, "核心配置更新出错: {}", e);
+                    }
+                }
+                
+                // 确保前端配置已更新并刷新显示
+                logging!(info, Type::Config, true, "刷新前端配置显示");
+                handle::Handle::refresh_clash();
+                handle::Handle::refresh_verge();
+                
+                // 更新系统托盘
+                if let Err(e) = tray::Tray::global().update_menu() {
+                    logging!(warn, Type::Config, true, "更新托盘菜单失败: {}", e);
+                }
+                
                 Ok(())
             } else {
                 logging!(warn, Type::Config, true, "配置切换被跳过: {}", uid);
