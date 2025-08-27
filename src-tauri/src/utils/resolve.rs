@@ -1172,13 +1172,34 @@ async fn switch_to_profile(uid: String) -> Result<()> {
 
 /// 等待核心完全启动并就绪
 async fn wait_for_core_ready() {
-    let max_wait_time = 30; // 最多等待30秒
-    let check_interval = 500; // 每500ms检查一次
+    let max_wait_time = 30 * 1000; // 最多等待30秒
+    let check_interval = 1000; // 每1000ms检查一次
     let mut elapsed = 0;
     
     logging!(info, Type::Config, true, "等待核心启动完成...");
     
-    while elapsed < max_wait_time * 1000 {
+    // 首先检查IPC路径配置
+    let ipc_path_result = app_profiles_dir().and_then(|_| {
+        crate::utils::dirs::ipc_path()
+    });
+    
+    match &ipc_path_result {
+        Ok(path) => {
+            logging!(info, Type::Config, true, "IPC路径配置: {:?}", path);
+            
+            // 检查路径是否存在
+            if path.exists() {
+                logging!(info, Type::Config, true, "IPC路径文件存在");
+            } else {
+                logging!(warn, Type::Config, true, "IPC路径文件不存在: {:?}", path);
+            }
+        }
+        Err(e) => {
+            logging!(error, Type::Config, true, "获取IPC路径失败: {}", e);
+        }
+    }
+    
+    while elapsed < max_wait_time {
         let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
         let running_mode = CoreManager::global().get_running_mode();
         
@@ -1209,14 +1230,46 @@ async fn wait_for_core_ready() {
         }
     }
     
-    logging!(warn, Type::Config, true, "等待核心启动超时({}秒)，继续执行配置切换", max_wait_time);
+    logging!(warn, Type::Config, true, "等待核心启动超时({}秒)，继续执行配置切换", max_wait_time / 1000);
 }
 
 /// 测试核心连接是否可用
 async fn test_core_connection() -> bool {
     logging!(debug, Type::Config, true, "开始测试核心连接...");
     
+    // 获取IPC管理器的路径信息
+    let ipc_manager = IpcManager::global();
+    
+    // 检查IPC路径
+    let ipc_path_result = crate::utils::dirs::ipc_path();
+    match &ipc_path_result {
+        Ok(path) => {
+            logging!(debug, Type::Config, true, "测试连接使用IPC路径: {:?}", path);
+            
+            // 检查socket文件是否存在
+            if path.exists() {
+                logging!(debug, Type::Config, true, "IPC socket文件存在");
+                
+                // 检查文件权限（Unix系统）
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        let permissions = metadata.permissions();
+                        logging!(debug, Type::Config, true, "IPC socket权限: {:o}", permissions.mode());
+                    }
+                }
+            } else {
+                logging!(warn, Type::Config, true, "IPC socket文件不存在: {:?}", path);
+            }
+        }
+        Err(e) => {
+            logging!(error, Type::Config, true, "获取IPC路径失败: {}", e);
+        }
+    }
+    
     // 尝试获取代理信息来测试IPC连接
+    logging!(debug, Type::Config, true, "尝试通过IPC获取代理信息...");
     match tokio::time::timeout(
         tokio::time::Duration::from_secs(3),
         IpcManager::global().get_proxies()
