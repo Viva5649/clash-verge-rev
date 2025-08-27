@@ -1,8 +1,9 @@
 #[cfg(target_os = "macos")]
 use crate::AppHandleManager;
 use crate::{
-    config::{Config, PrfItem},
+    config::{Config, PrfItem, IVerge},
     core::*,
+    feat,
     ipc::IpcManager,
     logging, logging_error,
     module::lightweight::{self, auto_lightweight_mode_init},
@@ -215,6 +216,17 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
 
     // 启动时自动导入订阅URL
     auto_import_startup_urls().await;
+
+    // 自动启用跟随系统启动功能
+    if let Err(e) = auto_enable_autostart_on_system_startup().await {
+        logging!(
+            warn,
+            Type::Setup,
+            true,
+            "自动启用跟随系统启动功能失败: {}",
+            e
+        );
+    }
 
     let elapsed = start_time.elapsed();
     logging!(
@@ -1106,6 +1118,141 @@ async fn test_core_connection() -> bool {
         }
     }
 }
+
+/// 启动时自动启用跟随系统启动功能
+/// 每次应用启动时检查并自动设置跟随系统启动功能
+async fn auto_enable_autostart_on_system_startup() -> Result<()> {
+    logging!(info, Type::Setup, true, "检查并自动启用跟随系统启动功能...");
+    
+    // 使用 scopeguard 确保错误不影响启动流程
+    let _guard = scopeguard::guard((), |_| {
+        logging!(trace, Type::Setup, true, "自动启用跟随系统启动功能检查完成");
+    });
+    
+    // 获取当前跟随系统启动状态
+    let current_state = {
+        Config::verge().latest_ref().enable_auto_launch.unwrap_or(false)
+    };
+    
+    // 如果已经启用，跳过设置
+    if current_state {
+        logging!(info, Type::Setup, true, "跟随系统启动功能已启用，跳过自动设置");
+        return Ok(());
+    }
+    
+    // 检查是否是管理员模式（Windows下可能不支持）
+    #[cfg(target_os = "windows")]
+    {
+        if crate::utils::help::is_admin() {
+            logging!(
+                info,
+                Type::Setup,
+                true,
+                "检测到管理员模式，跳过自动启用跟随系统启动功能"
+            );
+            return Ok(());
+        }
+    }
+    
+    // 检查平台支持
+    let platform_supported = check_platform_autostart_support();
+    if !platform_supported {
+        logging!(
+            warn,
+            Type::Setup,
+            true,
+            "当前平台不支持自动启用跟随系统启动功能"
+        );
+        return Ok(());
+    }
+    
+    // 自动启用跟随系统启动
+    logging!(info, Type::Setup, true, "自动启用跟随系统启动功能...");
+    
+    let patch = IVerge {
+        enable_auto_launch: Some(true),
+        ..Default::default()
+    };
+    
+    // 使用现有的配置更新机制
+    match feat::patch_verge(patch, false).await {
+        Ok(_) => {
+            logging!(info, Type::Setup, true, "跟随系统启动功能已自动启用");
+        }
+        Err(e) => {
+            logging!(
+                warn,
+                Type::Setup,
+                true,
+                "自动启用跟随系统启动功能失败，但不影响应用启动: {}",
+                e
+            );
+            // 返回错误，但在调用处会被捕获并记录，不会中断启动
+            return Err(e);
+        }
+    }
+    
+    Ok(())
+}
+
+/// 检查平台是否支持跟随系统启动功能
+fn check_platform_autostart_support() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: 检查是否有写入启动文件夹的权限
+        use crate::utils::autostart::get_startup_dir;
+        match get_startup_dir() {
+            Ok(_) => true,
+            Err(e) => {
+                logging!(
+                    warn,
+                    Type::Setup,
+                    true,
+                    "Windows启动文件夹访问失败: {}",
+                    e
+                );
+                false
+            }
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: 通常都支持 LaunchAgent
+        true
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        // Linux: 检查桌面环境和 autostart 目录
+        let has_xdg_config = std::env::var("XDG_CONFIG_HOME").is_ok();
+        let has_home = std::env::var("HOME").is_ok();
+        
+        if !has_xdg_config && !has_home {
+            logging!(
+                warn,
+                Type::Setup,
+                true,
+                "Linux环境缺少必要的环境变量(XDG_CONFIG_HOME或HOME)"
+            );
+            false
+        } else {
+            true
+        }
+    }
+    
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        logging!(
+            warn,
+            Type::Setup,
+            true,
+            "未知平台，不支持自动启用跟随系统启动功能"
+        );
+        false
+    }
+}
+
 // /// 测试启动时自动导入订阅功能
 // pub async fn test_auto_import_startup_urls() -> Result<()> {
 //     logging!(info, Type::Config, true, "手动测试启动时自动导入订阅功能");
