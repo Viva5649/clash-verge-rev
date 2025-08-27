@@ -756,6 +756,43 @@ pub async fn restore_public_dns() {
 }
 
 /// 启动时自动导入订阅URL
+/// 
+/// ## 配置说明
+/// 
+/// 在 `verge.yaml` 配置文件中添加以下配置：
+/// 
+/// ```yaml
+/// # 启用启动时自动导入订阅功能
+/// enable_startup_import: true
+/// 
+/// # 要自动导入的订阅URL列表
+/// startup_import_urls:
+///   - "https://example.com/subscription1"
+///   - "https://example.com/subscription2"
+/// ```
+/// 
+/// ## 功能特性
+/// 
+/// - 支持多个订阅URL同时导入
+/// - 自动跳过空白或无效的URL
+/// - 提供详细的日志记录
+/// - 导入成功/失败时会发送通知消息
+/// - 不会阻塞应用启动流程
+/// - 支持导入完成后自动切换到最新配置
+/// 
+/// ## 自动切换逻辑
+/// 
+/// - 只有在至少一个配置成功导入时才会执行切换
+/// - 切换到最后一个成功导入的配置
+/// - 切换过程中会发送相应的通知消息
+/// 
+/// ## 使用场景
+/// 
+/// - 企业环境下的统一配置分发
+/// - 新设备首次启动时的自动配置
+/// - 定期更新的订阅源自动导入
+/// - 自动激活最新的代理配置
+/// 
 pub async fn auto_import_startup_urls() {
     // 提取所需的配置值，避免跨await持有锁
     let (enable_startup_import, urls) = {
@@ -784,6 +821,7 @@ pub async fn auto_import_startup_urls() {
 
     let mut success_count = 0;
     let mut failed_count = 0;
+    let mut last_successful_uid: Option<String> = None;
 
     for (index, url) in urls.iter().enumerate() {
         if url.trim().is_empty() {
@@ -801,6 +839,7 @@ pub async fn auto_import_startup_urls() {
                 Ok(uid) => {
                     logging!(info, Type::Config, true, "成功导入订阅: {} (UID: {})", url, uid);
                     success_count += 1;
+                    last_successful_uid = Some(uid);
                     break;
                 }
                 Err(e) => {
@@ -825,6 +864,24 @@ pub async fn auto_import_startup_urls() {
         logging!(info, Type::Config, true, "{}", summary);
         // // 发送总结通知
         // handle::Handle::notice_message("startup_import_summary", summary);
+    }
+
+    // 切换到最后一个成功导入的配置
+    if last_successful_uid.is_some() {
+        if let Some(uid) = last_successful_uid {
+            logging!(info, Type::Config, true, "启用了自动切换，正在切换到最新导入的配置: {}", uid);
+            
+            match switch_to_profile(uid.clone()).await {
+                Ok(_) => {
+                    logging!(info, Type::Config, true, "成功切换到配置: {}", uid);
+                    handle::Handle::notice_message("startup_import_switched", format!("已切换到最新导入的配置: {}", uid));
+                }
+                Err(e) => {
+                    logging!(error, Type::Config, true, "切换到配置失败: {} - {}", uid, e);
+                    handle::Handle::notice_message("startup_import_switch_error", format!("切换配置失败: {}", e));
+                }
+            }
+        }
     }
 
     logging!(info, Type::Config, true, "启动时自动导入订阅完成");
@@ -879,6 +936,43 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
         Err(e) => {
             logging!(error, Type::Config, true, "从URL创建配置项失败: {}", e);
             Err(e)
+        }
+    }
+}
+
+/// 切换到指定的配置文件
+/// 复用现有的配置切换逻辑
+async fn switch_to_profile(uid: String) -> Result<()> {
+    use crate::config::IProfiles;
+    use crate::cmd::profile::patch_profiles_config;
+    
+    logging!(info, Type::Config, true, "开始切换到配置: {}", uid);
+    
+    // 检查配置是否存在
+    {
+        let profiles_config = Config::profiles();
+        let profiles = profiles_config.latest_ref();
+        profiles.get_item(&uid)?; // 如果配置不存在会返回错误
+    }
+    
+    // 创建切换配置的请求
+    let mut profiles_patch = IProfiles::default();
+    profiles_patch.current = Some(uid.clone());
+    
+    // 执行配置切换
+    match patch_profiles_config(profiles_patch).await {
+        Ok(success) => {
+            if success {
+                logging!(info, Type::Config, true, "成功切换到配置: {}", uid);
+                Ok(())
+            } else {
+                logging!(warn, Type::Config, true, "配置切换被跳过: {}", uid);
+                Ok(())
+            }
+        }
+        Err(e) => {
+            logging!(error, Type::Config, true, "配置切换失败: {} - {}", uid, e);
+            Err(anyhow::anyhow!("配置切换失败: {}", e))
         }
     }
 }
