@@ -819,16 +819,11 @@ pub async fn auto_import_startup_urls() {
     };
     
     #[cfg(target_os = "windows")]
-    {
-        let is_first_startup = {
-            let verge = Config::verge();
-            let verge_config = verge.latest_ref();
-            verge_config.is_first_startup.unwrap_or(true)
-        };
-        if is_first_startup {
-            logging!(info, Type::Config, true, "检测到Windows端首次启动，将在导入配置后重启应用");
-        }
-    }
+    let is_first_startup = {
+        let verge = Config::verge();
+        let verge_config = verge.latest_ref();
+        verge_config.is_first_startup.unwrap_or(true)
+    };
     
     // 检查是否启用了启动时自动导入
     if !enable_startup_import {
