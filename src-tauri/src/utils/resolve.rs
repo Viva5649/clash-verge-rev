@@ -8,7 +8,7 @@ use crate::{
     logging, logging_error,
     module::lightweight::{self, auto_lightweight_mode_init},
     process::AsyncHandler,
-    utils::{dirs::app_profiles_dir, init, logging::Type, server},
+    utils::{init, logging::Type, server},
     wrap_err,
 };
 use anyhow::{bail, Result};
@@ -1092,12 +1092,20 @@ async fn switch_to_profile(uid: String) -> Result<()> {
         }
     }
     
-    // 记录当前配置状态
-    {
+    // 检查当前配置状态，避免重复切换
+    let current_uid = {
         let profiles_config = Config::profiles();
         let profiles = profiles_config.latest_ref();
         let current = profiles.get_current();
         logging!(info, Type::Config, true, "当前配置: {:?}, 目标配置: {}", current, uid);
+        current
+    };
+    // 如果当前配置与目标配置相同，跳过切换
+    if let Some(ref current) = current_uid {
+        if current == &uid {
+            logging!(info, Type::Config, true, "当前配置与目标配置相同 ({}), 跳过配置切换", uid);
+            return Ok(());
+        }
     }
     
     // 创建切换配置的请求
@@ -1111,58 +1119,6 @@ async fn switch_to_profile(uid: String) -> Result<()> {
         Ok(success) => {
             if success {
                 logging!(info, Type::Config, true, "配置切换成功: {}", uid);
-                
-                // 验证配置是否真的切换了
-                {
-                    let profiles_config = Config::profiles();
-                    let profiles = profiles_config.latest_ref();
-                    let new_current = profiles.get_current();
-                    logging!(info, Type::Config, true, "切换后当前配置: {:?}", new_current);
-                    
-                    if new_current.as_ref() == Some(&uid) {
-                        logging!(info, Type::Config, true, "配置切换验证成功");
-                    } else {
-                        logging!(warn, Type::Config, true, "配置切换验证失败: 期望={}, 实际={:?}", uid, new_current);
-                    }
-                }
-                
-                // 检查核心状态，只有在核心运行时才更新配置
-                let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
-                logging!(info, Type::Config, true, "核心运行状态: {:?}", CoreManager::global().get_running_mode());
-                
-                if core_running {
-                    logging!(info, Type::Config, true, "核心已运行，更新核心配置以同步代理节点");
-                    match CoreManager::global().update_config().await {
-                        Ok((true, msg)) => {
-                            logging!(info, Type::Config, true, "核心配置更新成功: {}", msg);
-                        }
-                        Ok((false, msg)) => {
-                            logging!(warn, Type::Config, true, "核心配置更新失败: {}", msg);
-                        }
-                        Err(e) => {
-                            logging!(warn, Type::Config, true, "核心配置更新出错，但不影响配置切换: {}", e);
-                        }
-                    }
-                    
-                    // 测试获取代理信息
-                    logging!(info, Type::Config, true, "测试获取代理信息...");
-                    match IpcManager::global().get_proxies().await {
-                        Ok(proxies) => {
-                            let proxy_info = if let Some(obj) = proxies.as_object() {
-                                format!("获取到代理对象，包含{}个字段", obj.len())
-                            } else {
-                                format!("获取到代理信息: {}", proxies.to_string().len())
-                            };
-                            logging!(info, Type::Config, true, "成功获取代理信息: {}", proxy_info);
-                        }
-                        Err(e) => {
-                            logging!(warn, Type::Config, true, "获取代理信息失败: {}", e);
-                        }
-                    }
-                } else {
-                    logging!(info, Type::Config, true, "核心未运行，跳过配置更新，将在核心启动后自动同步");
-                }
-                
                 Ok(())
             } else {
                 logging!(warn, Type::Config, true, "配置切换被跳过: {}", uid);
@@ -1184,27 +1140,6 @@ async fn wait_for_core_ready() {
     
     logging!(info, Type::Config, true, "等待核心启动完成...");
     
-    // 首先检查IPC路径配置
-    let ipc_path_result = app_profiles_dir().and_then(|_| {
-        crate::utils::dirs::ipc_path()
-    });
-    
-    match &ipc_path_result {
-        Ok(path) => {
-            logging!(info, Type::Config, true, "IPC路径配置: {:?}", path);
-            
-            // 检查路径是否存在
-            if path.exists() {
-                logging!(info, Type::Config, true, "IPC路径文件存在");
-            } else {
-                logging!(warn, Type::Config, true, "IPC路径文件不存在: {:?}", path);
-            }
-        }
-        Err(e) => {
-            logging!(error, Type::Config, true, "获取IPC路径失败: {}", e);
-        }
-    }
-    
     while elapsed < max_wait_time {
         let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
         let running_mode = CoreManager::global().get_running_mode();
@@ -1214,7 +1149,7 @@ async fn wait_for_core_ready() {
         if core_running {
             // 核心已启动，再等待一小段时间确保IPC连接建立
             logging!(info, Type::Config, true, "核心已启动(模式: {:?})，等待IPC连接建立...", running_mode);
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             
             // 测试IPC连接是否可用
             if test_core_connection().await {
