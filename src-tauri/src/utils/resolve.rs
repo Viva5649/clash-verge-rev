@@ -941,6 +941,18 @@ pub async fn auto_import_startup_urls() {
                         if let Err(e) = auto_enable_system_proxy_after_import().await {
                             logging!(warn, Type::Config, true, "自动开启系统代理失败: {}", e);
                         }
+                        // 使用统一的UI刷新函数
+                        logging!(info, Type::Config, true, "准备刷新配置切换后的界面");
+                        AsyncHandler::spawn(move || async move {
+                            // 配置切换后刷新：Clash界面 + Verge界面 + 托盘菜单，延迟100ms
+                            refresh_ui_after_config_change(
+                                true,  // refresh_clash: 刷新代理列表
+                                true,  // refresh_verge: 刷新配置状态
+                                true,  // update_tray_menu: 更新托盘菜单
+                                true, // update_tray_icon: 更新图标
+                                100    // delay_ms: 100ms延迟确保配置应用
+                            ).await;
+                        });
                     }
                     Err(e) => {
                         logging!(error, Type::Config, true, "切换到配置失败: {} - {}", switch_uid, e);
@@ -1149,18 +1161,6 @@ async fn switch_to_profile(uid: String) -> Result<()> {
                     }
                 } else {
                     logging!(info, Type::Config, true, "核心未运行，跳过配置更新，将在核心启动后自动同步");
-                }
-                
-                // 确保前端配置已更新并刷新显示
-                logging!(info, Type::Config, true, "刷新前端配置显示");
-                handle::Handle::refresh_clash();
-                handle::Handle::refresh_verge();
-                
-                // 更新系统托盘
-                if let Err(e) = tray::Tray::global().update_menu() {
-                    logging!(warn, Type::Config, true, "更新托盘菜单失败: {}", e);
-                } else {
-                    logging!(info, Type::Config, true, "托盘菜单更新成功");
                 }
                 
                 Ok(())
@@ -1497,25 +1497,6 @@ async fn auto_enable_system_proxy_after_import() -> Result<()> {
     match feat::patch_verge(patch, false).await {
         Ok(_) => {
             logging!(info, Type::Config, true, "系统代理已自动启用");
-            
-            // 刷新前端界面状态
-            handle::Handle::refresh_verge();
-            
-            // 更新系统托盘菜单
-            if let Err(e) = tray::Tray::global().update_menu() {
-                logging!(warn, Type::Config, true, "更新托盘菜单失败: {}", e);
-            } else {
-                logging!(info, Type::Config, true, "托盘菜单更新成功");
-            }
-            
-            // 更新托盘图标状态
-            if let Err(e) = tray::Tray::global().update_part() {
-                logging!(warn, Type::Config, true, "更新托盘图标失败: {}", e);
-            } else {
-                logging!(info, Type::Config, true, "托盘图标更新成功");
-            }
-            
-            logging!(info, Type::Config, true, "系统代理自动启用完成，用户可立即使用代理服务");
             Ok(())
         }
         Err(e) => {
@@ -1523,4 +1504,62 @@ async fn auto_enable_system_proxy_after_import() -> Result<()> {
             Err(anyhow::anyhow!("自动启用系统代理失败: {}", e))
         }
     }
+}
+
+async fn refresh_ui_after_config_change(
+    refresh_clash: bool,
+    refresh_verge: bool, 
+    update_tray_menu: bool,
+    update_tray_icon: bool,
+    delay_ms: u64
+) {
+    // 延迟确保配置已完全应用
+    if delay_ms > 0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+    }
+    
+    logging!(info, Type::Config, true, "开始统一刷新UI界面");
+    
+    // 1. 刷新Clash界面（代理列表等）
+    if refresh_clash {
+        logging!(info, Type::Config, true, "刷新Clash界面");
+        handle::Handle::refresh_clash();
+        
+        // 短暂间隔避免冲突
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    
+    // 2. 刷新Verge界面（设置等）
+    if refresh_verge {
+        logging!(info, Type::Config, true, "刷新Verge界面");
+        handle::Handle::refresh_verge();
+        
+        // 短暂间隔避免冲突
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    
+    // 3. 更新系统托盘菜单
+    if update_tray_menu {
+        logging!(info, Type::Config, true, "更新系统托盘菜单");
+        if let Err(e) = tray::Tray::global().update_menu() {
+            logging!(warn, Type::Config, true, "更新托盘菜单失败: {}", e);
+        } else {
+            logging!(info, Type::Config, true, "托盘菜单更新成功");
+        }
+        
+        // 短暂间隔避免冲突
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    
+    // 4. 更新托盘图标状态
+    if update_tray_icon {
+        logging!(info, Type::Config, true, "更新托盘图标状态");
+        if let Err(e) = tray::Tray::global().update_part() {
+            logging!(warn, Type::Config, true, "更新托盘图标失败: {}", e);
+        } else {
+            logging!(info, Type::Config, true, "托盘图标更新成功");
+        }
+    }
+    
+    logging!(info, Type::Config, true, "UI界面刷新完成");
 }
