@@ -374,7 +374,7 @@ impl IVerge {
             sysproxy_tray_icon: Some(false),
             tun_tray_icon: Some(false),
             enable_auto_launch: Some(false),
-            enable_silent_start: Some(false),
+            enable_silent_start: Some(true),
             enable_hover_jump_navigator: Some(true),
             enable_system_proxy: Some(false),
             proxy_auto_config: Some(false),
