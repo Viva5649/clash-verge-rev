@@ -1318,19 +1318,19 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
         return Ok(());
     }
     
-    // 检查是否是管理员模式（Windows下可能不支持）
-    #[cfg(target_os = "windows")]
-    {
-        if check_is_admin() {
-            logging!(
-                info,
-                Type::Setup,
-                true,
-                "检测到管理员模式，跳过自动启用跟随系统启动功能"
-            );
-            return Ok(());
-        }
-    }
+    // // 检查是否是管理员模式（Windows下可能不支持）
+    // #[cfg(target_os = "windows")]
+    // {
+    //     if check_is_admin() {
+    //         logging!(
+    //             info,
+    //             Type::Setup,
+    //             true,
+    //             "检测到管理员模式，跳过自动启用跟随系统启动功能"
+    //         );
+    //         return Ok(());
+    //     }
+    // }
     
     // 检查平台支持
     let platform_supported = check_platform_autostart_support();
@@ -1347,12 +1347,11 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
     // 自动启用跟随系统启动
     logging!(info, Type::Setup, true, "自动启用跟随系统启动功能...");
     
+    // 使用现有的配置更新机制
     let patch = IVerge {
         enable_auto_launch: Some(true),
         ..Default::default()
     };
-    
-    // 使用现有的配置更新机制
     match feat::patch_verge(patch, false).await {
         Ok(_) => {
             logging!(info, Type::Setup, true, "跟随系统启动功能已自动启用");
@@ -1377,21 +1376,22 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
 fn check_platform_autostart_support() -> bool {
     #[cfg(target_os = "windows")]
     {
-        // Windows: 检查是否有写入启动文件夹的权限
-        use crate::utils::autostart::get_startup_dir;
-        match get_startup_dir() {
-            Ok(_) => true,
-            Err(e) => {
-                logging!(
-                    warn,
-                    Type::Setup,
-                    true,
-                    "Windows启动文件夹访问失败: {}",
-                    e
-                );
-                false
-            }
-        }
+        true
+        // // Windows: 检查是否有写入启动文件夹的权限
+        // use crate::utils::autostart::get_startup_dir;
+        // match get_startup_dir() {
+        //     Ok(_) => true,
+        //     Err(e) => {
+        //         logging!(
+        //             warn,
+        //             Type::Setup,
+        //             true,
+        //             "Windows启动文件夹访问失败: {}",
+        //             e
+        //         );
+        //         false
+        //     }
+        // }
     }
     
     #[cfg(target_os = "macos")]
@@ -1431,16 +1431,16 @@ fn check_platform_autostart_support() -> bool {
     }
 }
 
-/// 检查是否以管理员身份运行（内部使用版本）
-#[cfg(target_os = "windows")]
-fn check_is_admin() -> bool {
-    use deelevate::{PrivilegeLevel, Token};
+// /// 检查是否以管理员身份运行（内部使用版本）
+// #[cfg(target_os = "windows")]
+// fn check_is_admin() -> bool {
+//     use deelevate::{PrivilegeLevel, Token};
     
-    Token::with_current_process()
-        .and_then(|token| token.privilege_level())
-        .map(|level| level != PrivilegeLevel::NotPrivileged)
-        .unwrap_or(false)
-}
+//     Token::with_current_process()
+//         .and_then(|token| token.privilege_level())
+//         .map(|level| level != PrivilegeLevel::NotPrivileged)
+//         .unwrap_or(false)
+// }
 
 // /// 测试启动时自动导入订阅功能
 // pub async fn test_auto_import_startup_urls() -> Result<()> {
