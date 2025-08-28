@@ -870,7 +870,6 @@ pub async fn auto_import_startup_urls() {
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     } else {
                         logging!(error, Type::Config, true, "导入订阅最终失败: {} - {}", url, e);
-                        // handle::Handle::notice_message("startup_import_error", format!("订阅导入失败: {}", url));
                         failed_count += 1;
                         break;
                     }
@@ -882,8 +881,6 @@ pub async fn auto_import_startup_urls() {
     if success_count > 0 || failed_count > 0 {
         let summary = format!("启动导入完成: 成功{}个, 失败{}个", success_count, failed_count);
         logging!(info, Type::Config, true, "{}", summary);
-        // // 发送总结通知
-        // handle::Handle::notice_message("startup_import_summary", summary);
     }
 
     // 处理导入成功后的逻辑
@@ -939,11 +936,14 @@ pub async fn auto_import_startup_urls() {
                 match switch_to_profile_with_retry(switch_uid.clone(), 3).await {
                     Ok(_) => {
                         logging!(info, Type::Config, true, "成功切换到配置: {}", switch_uid);
-                        // handle::Handle::notice_message("startup_import_switched", format!("已切换到最新导入的配置"));
+                        
+                        // 自动开启系统代理
+                        if let Err(e) = auto_enable_system_proxy_after_import().await {
+                            logging!(warn, Type::Config, true, "自动开启系统代理失败: {}", e);
+                        }
                     }
                     Err(e) => {
                         logging!(error, Type::Config, true, "切换到配置失败: {} - {}", switch_uid, e);
-                        // handle::Handle::notice_message("startup_import_switch_error", format!("切换配置失败: {}", e));
                     }
                 }
             });
@@ -1448,3 +1448,79 @@ fn check_platform_autostart_support() -> bool {
 //     auto_import_startup_urls().await;
 //     Ok(())
 // }
+
+/// 在配置导入成功后自动开启系统代理
+/// 
+/// ## 功能说明
+/// 
+/// 当启动时自动导入订阅配置成功并切换到新配置后，
+/// 自动启用系统代理模式，让用户可以立即使用代理服务。
+/// 
+/// ## 实现特性
+/// 
+/// - 检查当前系统代理状态，避免重复开启
+/// - 使用现有的配置更新机制确保一致性
+/// - 完整的错误处理和日志记录
+/// - 不会阻塞配置切换流程
+/// - 更新前端界面和系统托盘状态
+/// 
+/// ## 使用场景
+/// 
+/// - 首次启动导入配置后立即可用
+/// - 企业环境下的自动化配置部署
+/// - 减少用户手动操作步骤
+/// 
+async fn auto_enable_system_proxy_after_import() -> Result<()> {
+    logging!(info, Type::Config, true, "开始自动启用系统代理...");
+    
+    // 检查当前系统代理状态
+    let current_system_proxy_enabled = {
+        let verge = Config::verge();
+        let verge_config = verge.latest_ref();
+        verge_config.enable_system_proxy.unwrap_or(false)
+    };
+    
+    // 如果系统代理已经启用，跳过设置
+    if current_system_proxy_enabled {
+        logging!(info, Type::Config, true, "系统代理已启用，跳过自动设置");
+        return Ok(());
+    }
+    
+    logging!(info, Type::Config, true, "系统代理未启用，开始自动启用...");
+    
+    // 使用现有的配置更新机制启用系统代理
+    let patch = IVerge {
+        enable_system_proxy: Some(true),
+        ..Default::default()
+    };
+    
+    match feat::patch_verge(patch, false).await {
+        Ok(_) => {
+            logging!(info, Type::Config, true, "系统代理已自动启用");
+            
+            // 刷新前端界面状态
+            handle::Handle::refresh_verge();
+            
+            // 更新系统托盘菜单
+            if let Err(e) = tray::Tray::global().update_menu() {
+                logging!(warn, Type::Config, true, "更新托盘菜单失败: {}", e);
+            } else {
+                logging!(info, Type::Config, true, "托盘菜单更新成功");
+            }
+            
+            // 更新托盘图标状态
+            if let Err(e) = tray::Tray::global().update_part() {
+                logging!(warn, Type::Config, true, "更新托盘图标失败: {}", e);
+            } else {
+                logging!(info, Type::Config, true, "托盘图标更新成功");
+            }
+            
+            logging!(info, Type::Config, true, "系统代理自动启用完成，用户可立即使用代理服务");
+            Ok(())
+        }
+        Err(e) => {
+            logging!(error, Type::Config, true, "自动启用系统代理失败: {}", e);
+            Err(anyhow::anyhow!("自动启用系统代理失败: {}", e))
+        }
+    }
+}
