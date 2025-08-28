@@ -819,11 +819,16 @@ pub async fn auto_import_startup_urls() {
     };
     
     #[cfg(target_os = "windows")]
-    let is_first_startup = {
-        let verge = Config::verge();
-        let verge_config = verge.latest_ref();
-        verge_config.is_first_startup.unwrap_or(true)
-    };
+    {
+        let is_first_startup = {
+            let verge = Config::verge();
+            let verge_config = verge.latest_ref();
+            verge_config.is_first_startup.unwrap_or(true)
+        };
+        if is_first_startup {
+            logging!(info, Type::Config, true, "检测到Windows端首次启动，将在导入配置后重启应用");
+        }
+    }
     
     // 检查是否启用了启动时自动导入
     if !enable_startup_import {
@@ -835,11 +840,6 @@ pub async fn auto_import_startup_urls() {
     if urls.is_empty() {
         logging!(debug, Type::Config, true, "没有配置启动时自动导入的URL");
         return;
-    }
-
-    #[cfg(target_os = "windows")]
-    if is_first_startup {
-        logging!(info, Type::Config, true, "检测到Windows端首次启动，将在导入配置后重启应用");
     }
 
     logging!(info, Type::Config, true, "开始启动时自动导入订阅，共{}个URL", urls.len());
@@ -855,7 +855,7 @@ pub async fn auto_import_startup_urls() {
 
         logging!(info, Type::Config, true, "正在导入第{}个订阅: {}", index + 1, url);
         
-        // 尝试导入，最多重试2次
+        // 尝试导入，单个url最多重试2次
         let mut retry_count = 0;
         let max_retries = 2;
         
@@ -863,36 +863,6 @@ pub async fn auto_import_startup_urls() {
             match import_subscription_from_url(url.clone(), None).await {
                 Ok(uid) => {
                     logging!(info, Type::Config, true, "成功导入订阅: {} (UID: {})", url, uid);
-                    
-                    // 验证导入的配置
-                    {
-                        let profiles_config = Config::profiles();
-                        let profiles = profiles_config.latest_ref();
-                        if let Ok(item) = profiles.get_item(&uid) {
-                            logging!(info, Type::Config, true, "验证导入配置: name={:?}, file={:?}, type={:?}", 
-                                item.name, item.file, item.itype);
-                            
-                            // 检查配置文件是否存在
-                            if let Some(file) = &item.file {
-                                let config_path = app_profiles_dir().unwrap_or_default().join(file);
-                                if config_path.exists() {
-                                    if let Ok(content) = std::fs::read_to_string(&config_path) {
-                                        let lines: Vec<&str> = content.lines().collect();
-                                        let proxy_count = lines.iter().filter(|line| line.contains("name:") || line.contains("server:")).count();
-                                        logging!(info, Type::Config, true, "配置文件验证: 路径={:?}, 大小={}字节, 行数={}, 疑似代理数={}", 
-                                            config_path, content.len(), lines.len(), proxy_count);
-                                    } else {
-                                        logging!(warn, Type::Config, true, "无法读取配置文件内容: {:?}", config_path);
-                                    }
-                                } else {
-                                    logging!(warn, Type::Config, true, "配置文件不存在: {:?}", config_path);
-                                }
-                            }
-                        } else {
-                            logging!(warn, Type::Config, true, "无法验证导入的配置: {}", uid);
-                        }
-                    }
-                    
                     success_count += 1;
                     last_successful_uid = Some(uid);
                     break;
@@ -931,12 +901,11 @@ pub async fn auto_import_startup_urls() {
             if is_first_startup {
                 logging!(info, Type::Config, true, "Windows端首次启动，导入配置完成后将重启应用");
                 
+                // 更新首次启动标记
                 let verge_patch = crate::config::IVerge {
                     is_first_startup: Some(false),
                     ..Default::default()
                 };
-                
-                // 更新首次启动标记
                 Config::verge().draft_mut().patch_config(verge_patch);
                 Config::verge().apply();
                 let _ = Config::verge().data_mut().save_file();
@@ -955,7 +924,7 @@ pub async fn auto_import_startup_urls() {
                     }
                 });
                 
-                return; // 首次启动重启后直接返回
+                return;
             }
                 
             // 延迟执行配置切换，确保核心已完全启动
@@ -1028,10 +997,8 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
                     bail!("Profile item missing UID");
                 }
             };
-
             // 添加到配置中
             let _ = wrap_err!(Config::profiles().data_mut().append_item(item));
-            
             logging!(info, Type::Config, true, "成功导入订阅配置，UID: {}", uid);
             Ok(uid)
         }
