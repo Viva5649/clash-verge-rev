@@ -214,9 +214,6 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
     logging!(trace, Type::System, true, "初始化热键...");
     logging_error!(Type::System, true, hotkey::Hotkey::global().init());
 
-    // 启动时自动导入订阅URL
-    auto_import_startup_urls().await;
-
     // 自动启用跟随系统启动功能
     if let Err(e) = auto_enable_autostart_on_system_startup().await {
         logging!(
@@ -227,6 +224,9 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
             e
         );
     }
+
+    // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
+    auto_import_startup_urls().await;
 
     let elapsed = start_time.elapsed();
     logging!(
