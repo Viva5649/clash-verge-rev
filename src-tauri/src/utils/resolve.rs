@@ -623,30 +623,11 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
     };
 
     if link_parsed.scheme() == "clash" || link_parsed.scheme() == "clash-verge" {
-        let name = link_parsed
-            .query_pairs()
-            .find(|(key, _)| key == "name")
-            .map(|(_, value)| value.into_owned());
-
-        let url_param = if let Some(query) = link_parsed.query() {
-            let prefix = "url=";
-            if let Some(pos) = query.find(prefix) {
-                let raw_url = &query[pos + prefix.len()..];
-                Some(percent_decode_str(raw_url).decode_utf8_lossy().to_string())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
         // 检查系统代理参数
         let enable_system_proxy_param = link_parsed
             .query_pairs()
             .find(|(key, _)| key == "enable_system_proxy")
             .map(|(_, value)| value.into_owned());
-
-        // 处理系统代理控制
         if let Some(ref proxy_value) = enable_system_proxy_param {
             log::info!(target:"app", "processing system proxy control: {}", proxy_value);
             
@@ -678,7 +659,7 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                     Ok(_) => {
                         let action = if enable_proxy { "启用" } else { "禁用" };
                         logging!(info, Type::Config, true, "通过URI协议{}系统代理成功", action);
-                        refresh_ui_after_config_change(true, true, true, true, 100);
+                        refresh_ui_after_config_change(false, false, false, true, 100);
                     }
                     Err(e) => {
                         logging!(error, Type::Config, true, "通过URI协议控制系统代理失败: {}", e);
@@ -689,6 +670,23 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                 logging!(info, Type::Config, true, "系统代理状态无变化，当前{}", status);
             }
         }
+        
+        let name = link_parsed
+            .query_pairs()
+            .find(|(key, _)| key == "name")
+            .map(|(_, value)| value.into_owned());
+
+        let url_param = if let Some(query) = link_parsed.query() {
+            let prefix = "url=";
+            if let Some(pos) = query.find(prefix) {
+                let raw_url = &query[pos + prefix.len()..];
+                Some(percent_decode_str(raw_url).decode_utf8_lossy().to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // 处理订阅导入（原有逻辑）
         match url_param {
