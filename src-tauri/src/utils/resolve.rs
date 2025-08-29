@@ -959,6 +959,14 @@ pub async fn auto_import_startup_urls() {
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                     logging!(info, Type::Config, true, "Windows端首次启动配置导入完成，即将重启应用");
                     
+                    // 重启前关闭内置服务器释放端口
+                    logging!(info, Type::Config, true, "重启前关闭内置服务器...");
+                    server::shutdown_embed_server();
+                    
+                    // 等待服务器完全关闭
+                    tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+                    logging!(info, Type::Config, true, "内置服务器关闭完成，准备重启应用");
+                    
                     if let Some(app_handle) = handle::Handle::global().app_handle() {
                         logging!(info, Type::Config, true, "获取到应用句柄，即将重启应用");
                         tauri::process::restart(&app_handle.env());

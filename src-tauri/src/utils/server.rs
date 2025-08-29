@@ -10,7 +10,19 @@ use crate::{
 use anyhow::{bail, Result};
 use port_scanner::local_port_available;
 use std::convert::Infallible;
+use std::sync::Arc;
+use tokio::sync::Notify;
 use warp::Filter;
+
+// 全局的服务器关闭信号
+static SERVER_SHUTDOWN: once_cell::sync::Lazy<Arc<Notify>> = 
+    once_cell::sync::Lazy::new(|| Arc::new(Notify::new()));
+
+/// 关闭内置服务器
+pub fn shutdown_embed_server() {
+    log::info!("发送内置服务器关闭信号");
+    SERVER_SHUTDOWN.notify_waiters();
+}
 
 #[derive(serde::Deserialize, Debug)]
 struct QueryParam {
@@ -82,6 +94,31 @@ pub fn embed_server() {
             .and(warp::query::<QueryParam>())
             .and_then(scheme_handler);
         let commands = visible.or(scheme).or(pac);
-        warp::serve(commands).run(([127, 0, 0, 1], port)).await;
+        
+        // 检查端口是否可用
+        if !local_port_available(port) {
+            log::error!("端口 {} 被占用，内嵌服务器启动失败", port);
+            return;
+        }
+        
+        // 启动服务器
+        log::info!("启动内嵌服务器，端口: {}", port);
+        
+        // 创建服务器future
+        let server_future = warp::serve(commands).run(([127, 0, 0, 1], port));
+        
+        log::info!("内嵌服务器启动成功，端口: {}", port);
+        
+        // 使用 tokio::select! 等待服务器运行或关闭信号
+        tokio::select! {
+            _ = server_future => {
+                log::info!("内嵌服务器正常结束");
+            }
+            _ = SERVER_SHUTDOWN.notified() => {
+                log::info!("收到关闭信号，内嵌服务器将在当前连接处理完毕后关闭");
+            }
+        }
+        
+        log::info!("内嵌服务器已完全关闭");
     });
 }
