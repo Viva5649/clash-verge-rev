@@ -623,7 +623,7 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
     };
 
     if link_parsed.scheme() == "clash" || link_parsed.scheme() == "clash-verge" {
-        // 检查系统代理参数
+        // 检查系统代理控制参数
         let enable_system_proxy_param = link_parsed
             .query_pairs()
             .find(|(key, _)| key == "enable_system_proxy")
@@ -671,6 +671,48 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
             }
         }
         
+        // 检查配置导入参数
+        let action_param = link_parsed
+            .query_pairs()
+            .find(|(key, _)| key == "action")
+            .map(|(_, value)| value.into_owned());
+        if let Some(action) = action_param {
+            if action == "import_config" {
+                log::info!(target:"app", "processing config import action");
+                
+                // 获取导入URL参数
+                let import_url = link_parsed
+                    .query_pairs()
+                    .find(|(key, _)| key == "url")
+                    .map(|(_, value)| percent_decode_str(&value).decode_utf8_lossy().to_string());
+                if let Some(url) = import_url {
+                    // 获取可选的配置名称参数
+                    let config_name = link_parsed
+                        .query_pairs()
+                        .find(|(key, _)| key == "name")
+                        .map(|(_, value)| value.into_owned());
+                    
+                    // 执行配置导入
+                    match handle_import_action(url, config_name).await {
+                        Ok(uid) => {
+                            logging!(info, Type::Config, true, "通过URI协议导入配置成功，UID: {}", uid);
+                            handle::Handle::notice_message("import_config_success", uid);
+                        }
+                        Err(e) => {
+                            logging!(error, Type::Config, true, "通过URI协议导入配置失败: {}", e);
+                            handle::Handle::notice_message("import_config_error", e.to_string());
+                        }
+                    }
+                    return Ok(());
+                } else {
+                    logging!(error, Type::Config, true, "URI协议导入配置缺少url参数");
+                    handle::Handle::notice_message("import_config_error", "缺少url参数".to_string());
+                    return Ok(());
+                }
+            }
+        }
+        
+        // 保持传统的URL导入参数兼容性（原有逻辑）
         let name = link_parsed
             .query_pairs()
             .find(|(key, _)| key == "name")
@@ -722,6 +764,50 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// 处理配置导入操作
+async fn handle_import_action(url: String, name: Option<String>) -> Result<String> {
+    logging!(info, Type::Config, true, "[URI导入] 开始导入配置: {}", url);
+    
+    // 使用超时保护避免长时间阻塞
+    let import_result = tokio::time::timeout(
+        Duration::from_secs(60), // 60秒超时
+        async {
+            let uid = import_subscription_from_url(url.clone(), name).await?;
+            
+            logging!(info, Type::Config, true, "[URI导入] 配置导入成功，UID: {}", uid);
+
+            // 使用带重试的配置切换
+            match switch_to_profile_with_retry(uid.clone(), 3).await {
+                Ok(_) => {
+                    logging!(info, Type::Config, true, "[URI导入] 成功切换到新导入的配置: {}", uid);
+                }
+                Err(e) => {
+                    logging!(error, Type::Config, true, "[URI导入] 自动切换配置失败: {}", e);
+                }
+            }
+
+            Ok(uid)
+        },
+    )
+    .await;
+
+    match import_result {
+        Ok(Ok(uid)) => {
+            logging!(info, Type::Config, true, "[URI导入] 导入完成: {}", url);
+            Ok(uid)
+        }
+        Ok(Err(e)) => {
+            logging!(error, Type::Config, true, "[URI导入] 导入失败: {}", e);
+            Err(e)
+        }
+        Err(_) => {
+            let error_msg = "导入配置超时，请检查网络连接";
+            logging!(error, Type::Config, true, "[URI导入] 导入超时(60秒): {}", url);
+            Err(anyhow::anyhow!(error_msg))
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1058,7 +1144,7 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
                 Some(uid) => uid,
                 None => {
                     logging!(error, Type::Config, true, "配置项缺少UID");
-                    bail!("Profile item missing UID");
+                    bail!("配置项缺少UID");
                 }
             };
             // 添加到配置中
