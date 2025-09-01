@@ -1,5 +1,5 @@
 ﻿# update-clash-verge.ps1
-$DownloadUrl = "https://lzd-client-model.oss-ap-southeast-1.aliyuncs.com/Qwen2/aidc_clash_202508291530.zip"
+$DownloadUrl = "https://lzd-client-model.oss-ap-southeast-1.aliyuncs.com/Qwen2/aidc_clash_202509012022.zip"
 $InstallPath = "C:\Program Files\AIDC\ClashVergeRev"
 $ExecutableName = "clash-verge.exe"
 $TimeoutSeconds = 1800
