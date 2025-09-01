@@ -604,7 +604,7 @@ pub fn create_window(is_show: bool) -> bool {
 }
 
 pub async fn resolve_scheme(param: String) -> Result<()> {
-    log::info!(target:"app", "received deep link: {param}");
+    logging!(info, Type::Config, true, "received deep link: {param}");
 
     let param_str = if param.starts_with("[") && param.len() > 4 {
         param
@@ -678,14 +678,15 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
             .map(|(_, value)| value.into_owned());
         if let Some(action) = action_param {
             if action == "import_config" {
-                log::info!(target:"app", "processing config import action");
-                
+                logging!(info, Type::Config, true, "[URL协议] 即将导入配置");
+
                 // 获取导入URL参数
                 let import_url = link_parsed
                     .query_pairs()
                     .find(|(key, _)| key == "url")
                     .map(|(_, value)| percent_decode_str(&value).decode_utf8_lossy().to_string());
                 if let Some(url) = import_url {
+                    logging!(info, Type::Config, true, "[URL协议] 导入配置 url: [{}]", url);
                     // 获取可选的配置名称参数
                     let config_name = link_parsed
                         .query_pairs()
@@ -696,17 +697,40 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                     match handle_import_action(url, config_name).await {
                         Ok(uid) => {
                             logging!(info, Type::Config, true, "通过URI协议导入配置成功，UID: {}", uid);
-                            handle::Handle::notice_message("import_config_success", uid);
                         }
                         Err(e) => {
                             logging!(error, Type::Config, true, "通过URI协议导入配置失败: {}", e);
-                            handle::Handle::notice_message("import_config_error", e.to_string());
                         }
                     }
                     return Ok(());
                 } else {
                     logging!(error, Type::Config, true, "URI协议导入配置缺少url参数");
-                    handle::Handle::notice_message("import_config_error", "缺少url参数".to_string());
+                    return Ok(());
+                }
+            } else if action == "update_config" {
+                logging!(info, Type::Config, true, "[URL协议] 即将更新配置");
+                
+                // 获取更新URL参数
+                let update_url = link_parsed
+                    .query_pairs()
+                    .find(|(key, _)| key == "url")
+                    .map(|(_, value)| percent_decode_str(&value).decode_utf8_lossy().to_string());
+                    
+                if let Some(url) = update_url {
+                    logging!(info, Type::Config, true, "准备更新配置，URL: {}", url);
+                    
+                    // 执行配置更新
+                    match handle_update_action(url).await {
+                        Ok(uid) => {
+                            logging!(info, Type::Config, true, "通过URI协议更新配置成功，UID: {}", uid);
+                        }
+                        Err(e) => {
+                            logging!(error, Type::Config, true, "通过URI协议更新配置失败: {}", e);
+                        }
+                    }
+                    return Ok(());
+                } else {
+                    logging!(error, Type::Config, true, "URI协议更新配置缺少url参数");
                     return Ok(());
                 }
             }
@@ -768,7 +792,7 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
 
 /// 处理配置导入操作
 async fn handle_import_action(url: String, name: Option<String>) -> Result<String> {
-    logging!(info, Type::Config, true, "[URI导入] 开始导入配置: {}", url);
+    logging!(info, Type::Config, true, "[URI协议] 开始导入配置: {}", url);
     
     // 使用超时保护避免长时间阻塞
     let import_result = tokio::time::timeout(
@@ -776,15 +800,15 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
         async {
             let uid = import_subscription_from_url(url.clone(), name).await?;
             
-            logging!(info, Type::Config, true, "[URI导入] 配置导入成功，UID: {}", uid);
+            logging!(info, Type::Config, true, "[URI协议] 配置导入成功，UID: {}", uid);
 
             // 使用带重试的配置切换
             match switch_to_profile_with_retry(uid.clone(), 3).await {
                 Ok(_) => {
-                    logging!(info, Type::Config, true, "[URI导入] 成功切换到新导入的配置: {}", uid);
+                    logging!(info, Type::Config, true, "[URI协议] 成功切换到新导入的配置: {}", uid);
                 }
                 Err(e) => {
-                    logging!(error, Type::Config, true, "[URI导入] 自动切换配置失败: {}", e);
+                    logging!(error, Type::Config, true, "[URI协议] 自动切换配置失败: {}", e);
                 }
             }
 
@@ -795,19 +819,80 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
 
     match import_result {
         Ok(Ok(uid)) => {
-            logging!(info, Type::Config, true, "[URI导入] 导入完成: {}", url);
+            logging!(info, Type::Config, true, "[URI协议] 导入完成: {}", url);
             Ok(uid)
         }
         Ok(Err(e)) => {
-            logging!(error, Type::Config, true, "[URI导入] 导入失败: {}", e);
+            logging!(error, Type::Config, true, "[URI协议] 导入失败: {}", e);
             Err(e)
         }
         Err(_) => {
             let error_msg = "导入配置超时，请检查网络连接";
-            logging!(error, Type::Config, true, "[URI导入] 导入超时(60秒): {}", url);
+            logging!(error, Type::Config, true, "[URI协议] 导入超时(60秒): {}", url);
             Err(anyhow::anyhow!(error_msg))
         }
     }
+}
+
+/// 处理配置更新操作
+async fn handle_update_action(url: String) -> Result<String> {
+    logging!(info, Type::Config, true, "[URI协议] 开始更新配置: {}", url);
+    
+    // 使用超时保护避免长时间阻塞
+    let update_result = tokio::time::timeout(
+        Duration::from_secs(60), // 60秒超时
+        async {
+            // 通过URL查找对应的配置UID
+            let uid = find_profile_uid_by_url(&url).await?;
+            
+            logging!(info, Type::Config, true, "[URI协议] 找到配置UID: {}", uid);
+            
+            // 使用现有的update_profile函数进行更新
+            feat::update_profile(uid.clone(), None, Some(true)).await?;
+            
+            logging!(info, Type::Config, true, "[URI协议] 配置更新成功，UID: {}", uid);
+            
+            Ok(uid)
+        },
+    )
+    .await;
+
+    match update_result {
+        Ok(Ok(uid)) => {
+            logging!(info, Type::Config, true, "[URI协议] 更新完成: {}", url);
+            Ok(uid)
+        }
+        Ok(Err(e)) => {
+            logging!(error, Type::Config, true, "[URI协议] 更新失败: {}", e);
+            Err(e)
+        }
+        Err(_) => {
+            let error_msg = "更新配置超时，请检查网络连接";
+            logging!(error, Type::Config, true, "[URI协议] 更新超时(60秒): {}", url);
+            Err(anyhow::anyhow!(error_msg))
+        }
+    }
+}
+
+/// 通过URL查找配置的UID
+async fn find_profile_uid_by_url(url: &str) -> Result<String> {
+    let profiles_config = Config::profiles();
+    let profiles = profiles_config.latest_ref();
+    
+    if let Some(items) = profiles.get_items() {
+        for item in items {
+            if let Some(existing_url) = &item.url {
+                if existing_url == url {
+                    if let Some(uid) = &item.uid {
+                        logging!(info, Type::Config, true, "找到匹配的配置: URL={}, UID={}", url, uid);
+                        return Ok(uid.clone());
+                    }
+                }
+            }
+        }
+    }
+    
+    bail!("未找到URL对应的配置: {}", url);
 }
 
 #[cfg(target_os = "macos")]
