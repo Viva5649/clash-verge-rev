@@ -412,7 +412,7 @@ impl IVerge {
             home_cards: None,
             service_state: None,
             enable_external_controller: Some(false),
-            startup_import_urls: Some(vec!["https://lzd-client-model.oss-ap-southeast-1.aliyuncs.com/Qwen2/clash_config_2.yaml".to_string()]),
+            startup_import_urls: Some(vec!["https://lzd-client-model.oss-ap-southeast-1.aliyuncs.com/aidc_clash/aidc_rule.yaml".to_string()]),
             enable_startup_import: Some(true),
             is_first_startup: Some(true),
             ..Self::default()
