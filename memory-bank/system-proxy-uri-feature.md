@@ -102,10 +102,10 @@ clash://?enable_system_proxy=0       # 禁用
 
 ```bash
 # 启用系统代理
-curl "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=true"
+Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=true"
 
 # 禁用系统代理
-curl "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=false"
+Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=false"
 ```
 
 ### 单独控制系统代理

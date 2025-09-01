@@ -259,7 +259,7 @@ open "clash://?enable_system_proxy=true"
 open "clash://?enable_system_proxy=false"
 
 # HTTP API调用（推荐用法）
-curl "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=true"
+Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=true"
 ```
 
 ### 🎯 应用场景
