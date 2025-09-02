@@ -93,19 +93,8 @@ try {
     $executablePath = Join-Path $InstallPath $ExecutableName
     if (Test-Path $executablePath) {
         Write-Log "启动客户端: $executablePath"
-        Start-Process -FilePath $executablePath
-        Write-Log "客户端启动成功，等待完全初始化..."
-        Start-Sleep -Seconds 15
-
-        # 导入配置
-        try {
-            $configScheme = "clash://?action=import_config&url=$ConfigUrl"
-            $encodedScheme = [System.Web.HttpUtility]::UrlEncode($configScheme)
-            Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=$encodedScheme" -ErrorAction SilentlyContinue
-            Write-Log "导入配置完成"
-        } catch {
-            Write-Log "配置导入失败: $($_.Exception.Message)" "WARN"
-        }
+        Start-Process -FilePath $executablePath -ArgumentList "--ConfigUrl", "`"$ConfigUrl`""
+        Write-Log "客户端启动成功"
     } else {
         throw "可执行文件不存在: $executablePath"
     }

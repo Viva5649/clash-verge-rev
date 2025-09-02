@@ -429,6 +429,21 @@ pub fn run() {
     // Initialize portable flag
     let _ = utils::dirs::init_portable_flag();
 
+    // Process command line arguments before running the app
+    let args: Vec<String> = std::env::args().collect();
+    // Parse --ConfigUrl argument directly
+    for i in 0..args.len() {
+        if args[i] == "--ConfigUrl" && i + 1 < args.len() {
+            let url = &args[i + 1];
+            if !url.is_empty() {
+                logging!(info, Type::Setup, true, "检测到命令行配置 url 参数: {}", url);
+                // Store the config URL to be processed later during setup
+                std::env::set_var("CLASH_VERGE_CONFIG_URL", url);
+                break;
+            }
+        }
+    }
+
     // Set Linux environment variable
     #[cfg(target_os = "linux")]
     {

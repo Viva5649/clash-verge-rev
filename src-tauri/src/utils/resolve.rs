@@ -140,6 +140,16 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
     logging_error!(Type::Config, true, Config::init_config().await);
     logging!(info, Type::Config, true, "配置初始化完成");
 
+    // Process command line config URL if provided
+    if let Ok(config_url) = std::env::var("CLASH_VERGE_CONFIG_URL") {
+        logging!(info, Type::Config, true, "处理命令行配置URL: {}", config_url);
+        if let Err(e) = process_cmdline_config_url(&config_url).await {
+            logging!(error, Type::Config, true, "处理命令行配置URL失败: {}", e);
+        }
+        // Remove the environment variable after processing
+        std::env::remove_var("CLASH_VERGE_CONFIG_URL");
+    }
+
     // 启动时清理冗余的 Profile 文件
     logging!(info, Type::Setup, true, "开始清理冗余的Profile文件...");
 
@@ -225,11 +235,8 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
         );
     }
 
-    // // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
-    // auto_import_startup_urls().await;
-
-    // 尝试开启代理
-    try_enable_system_proxy().await;
+    // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
+    auto_import_startup_urls().await;
 
     let elapsed = start_time.elapsed();
     logging!(
@@ -1798,4 +1805,40 @@ fn refresh_ui_after_config_change(
         
         logging!(info, Type::Config, true, "UI界面刷新完成");
     });
+}
+
+/// 处理命令行传入的配置 URL，将其添加到 startup_import_urls
+async fn process_cmdline_config_url(config_url: &str) -> Result<()> {
+    logging!(info, Type::Config, true, "开始处理命令行配置 url: {}", config_url);
+    
+    // 获取当前的 verge 配置并检查是否需要添加URL
+    let verge = Config::verge();
+    let existing_urls = verge.latest_ref().startup_import_urls.clone().unwrap_or_default();
+    
+    // 检查是否已经存在相同的 URL，避免重复添加
+    if existing_urls.contains(&config_url.to_string()) {
+        logging!(warn, Type::Config, true, "配置 url 已存在于 startup_import_urls中，跳过添加: {}", config_url);
+        return Ok(());
+    }
+    
+    // 添加新的URL
+    let mut startup_urls = existing_urls;
+    startup_urls.push(config_url.to_string());
+    logging!(info, Type::Config, true, "已将配置 url 添加到startup_import_urls: {}", config_url);
+    
+    // 创建更新配置的补丁
+    let verge_patch = IVerge {
+        startup_import_urls: Some(startup_urls),
+        enable_startup_import: Some(true),
+        ..IVerge::default()
+    };
+    
+    // 保存配置到文件
+    Config::verge().draft_mut().patch_config(verge_patch);
+    Config::verge().apply();
+    let _ = Config::verge().data_mut().save_file();
+    
+    logging!(info, Type::Config, true, "配置文件已更新，startup_import_urls 已包含命令行传入的 url");
+    
+    Ok(())
 }
