@@ -629,13 +629,13 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
             .find(|(key, _)| key == "enable_system_proxy")
             .map(|(_, value)| value.into_owned());
         if let Some(ref proxy_value) = enable_system_proxy_param {
-            log::info!(target:"app", "processing system proxy control: {}", proxy_value);
+            logging!(info, Type::Config, true, "[URL协议] processing system proxy control: {}", proxy_value);
             
             let enable_proxy = match proxy_value.to_lowercase().as_str() {
                 "true" | "1" | "on" | "enable" => true,
                 "false" | "0" | "off" | "disable" => false,
                 _ => {
-                    logging!(error, Type::Config, true, "Invalid enable_system_proxy value: {}. Use 'true' or 'false'", proxy_value);
+                    logging!(error, Type::Config, true, "[URL协议] Invalid enable_system_proxy value: {}. Use 'true' or 'false'", proxy_value);
                     false
                 }
             };
@@ -658,16 +658,16 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                 ).await {
                     Ok(_) => {
                         let action = if enable_proxy { "启用" } else { "禁用" };
-                        logging!(info, Type::Config, true, "通过URI协议{}系统代理成功", action);
+                        logging!(info, Type::Config, true, "[URL协议] {}系统代理成功", action);
                         refresh_ui_after_config_change(false, false, false, true, 100);
                     }
                     Err(e) => {
-                        logging!(error, Type::Config, true, "通过URI协议控制系统代理失败: {}", e);
+                        logging!(error, Type::Config, true, "[URL协议] 控制系统代理失败: {}", e);
                     }
                 }
             } else {
                 let status = if enable_proxy { "已启用" } else { "已禁用" };
-                logging!(info, Type::Config, true, "系统代理状态无变化，当前{}", status);
+                logging!(info, Type::Config, true, "[URL协议] 系统代理状态无变化，当前{}", status);
             }
         }
         
@@ -696,15 +696,15 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                     // 执行配置导入
                     match handle_import_action(url, config_name).await {
                         Ok(uid) => {
-                            logging!(info, Type::Config, true, "通过URI协议导入配置成功，UID: {}", uid);
+                            logging!(info, Type::Config, true, "[URL协议] 导入配置成功，UID: {}", uid);
                         }
                         Err(e) => {
-                            logging!(error, Type::Config, true, "通过URI协议导入配置失败: {}", e);
+                            logging!(error, Type::Config, true, "[URL协议] 导入配置失败: {}", e);
                         }
                     }
                     return Ok(());
                 } else {
-                    logging!(error, Type::Config, true, "URI协议导入配置缺少url参数");
+                    logging!(error, Type::Config, true, "[URL协议] 配置缺少 url 参数");
                     return Ok(());
                 }
             } else if action == "update_config" {
@@ -717,20 +717,20 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                     .map(|(_, value)| percent_decode_str(&value).decode_utf8_lossy().to_string());
                     
                 if let Some(url) = update_url {
-                    logging!(info, Type::Config, true, "准备更新配置，URL: {}", url);
+                    logging!(info, Type::Config, true, "[URL协议]准备更新配置，URL: {}", url);
                     
                     // 执行配置更新
                     match handle_update_action(url).await {
                         Ok(uid) => {
-                            logging!(info, Type::Config, true, "通过URI协议更新配置成功，UID: {}", uid);
+                            logging!(info, Type::Config, true, "[URL协议] 更新配置成功，UID: {}", uid);
                         }
                         Err(e) => {
-                            logging!(error, Type::Config, true, "通过URI协议更新配置失败: {}", e);
+                            logging!(error, Type::Config, true, "[URL协议] 更新配置失败: {}", e);
                         }
                     }
                     return Ok(());
                 } else {
-                    logging!(error, Type::Config, true, "URI协议更新配置缺少url参数");
+                    logging!(error, Type::Config, true, "[URL协议] 配置缺少url参数");
                     return Ok(());
                 }
             }
@@ -792,7 +792,7 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
 
 /// 处理配置导入操作
 async fn handle_import_action(url: String, name: Option<String>) -> Result<String> {
-    logging!(info, Type::Config, true, "[URI协议] 开始导入配置: {}", url);
+    logging!(info, Type::Config, true, "[URL协议-导入配置] 开始导入配置: {}", url);
     
     // 使用超时保护避免长时间阻塞
     let import_result = tokio::time::timeout(
@@ -800,15 +800,15 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
         async {
             let uid = import_subscription_from_url(url.clone(), name).await?;
             
-            logging!(info, Type::Config, true, "[URI协议] 配置导入成功，UID: {}", uid);
+            logging!(info, Type::Config, true, "[URL协议-导入配置] 配置导入成功，UID: {}", uid);
 
             // 使用带重试的配置切换
             match switch_to_profile_with_retry(uid.clone(), 3).await {
                 Ok(_) => {
-                    logging!(info, Type::Config, true, "[URI协议] 成功切换到新导入的配置: {}", uid);
+                    logging!(info, Type::Config, true, "[URL协议-导入配置] 成功切换到新导入的配置: {}", uid);
                 }
                 Err(e) => {
-                    logging!(error, Type::Config, true, "[URI协议] 自动切换配置失败: {}", e);
+                    logging!(error, Type::Config, true, "[URL协议-导入配置] 自动切换配置失败: {}", e);
                 }
             }
 
@@ -819,16 +819,16 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
 
     match import_result {
         Ok(Ok(uid)) => {
-            logging!(info, Type::Config, true, "[URI协议] 导入完成: {}", url);
+            logging!(info, Type::Config, true, "[URL协议-导入配置] 导入完成: {}", url);
             Ok(uid)
         }
         Ok(Err(e)) => {
-            logging!(error, Type::Config, true, "[URI协议] 导入失败: {}", e);
+            logging!(error, Type::Config, true, "[URL协议-导入配置] 导入失败: {}", e);
             Err(e)
         }
         Err(_) => {
             let error_msg = "导入配置超时，请检查网络连接";
-            logging!(error, Type::Config, true, "[URI协议] 导入超时(60秒): {}", url);
+            logging!(error, Type::Config, true, "[URL协议-导入配置] 导入超时 60 秒: {}", url);
             Err(anyhow::anyhow!(error_msg))
         }
     }
@@ -836,7 +836,7 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
 
 /// 处理配置更新操作
 async fn handle_update_action(url: String) -> Result<String> {
-    logging!(info, Type::Config, true, "[URI协议] 开始更新配置: {}", url);
+    logging!(info, Type::Config, true, "[URL协议-更新配置] 开始更新配置: {}", url);
     
     // 使用超时保护避免长时间阻塞
     let update_result = tokio::time::timeout(
@@ -845,12 +845,12 @@ async fn handle_update_action(url: String) -> Result<String> {
             // 通过URL查找对应的配置UID
             let uid = find_profile_uid_by_url(&url).await?;
             
-            logging!(info, Type::Config, true, "[URI协议] 找到配置UID: {}", uid);
+            logging!(info, Type::Config, true, "[URL协议-更新配置] 找到配置UID: {}", uid);
             
             // 使用现有的update_profile函数进行更新
             feat::update_profile(uid.clone(), None, Some(true)).await?;
             
-            logging!(info, Type::Config, true, "[URI协议] 配置更新成功，UID: {}", uid);
+            logging!(info, Type::Config, true, "[URL协议-更新配置] 配置更新成功，UID: {}", uid);
             
             Ok(uid)
         },
@@ -859,16 +859,16 @@ async fn handle_update_action(url: String) -> Result<String> {
 
     match update_result {
         Ok(Ok(uid)) => {
-            logging!(info, Type::Config, true, "[URI协议] 更新完成: {}", url);
+            logging!(info, Type::Config, true, "[URL协议-更新配置] 更新完成: {}", url);
             Ok(uid)
         }
         Ok(Err(e)) => {
-            logging!(error, Type::Config, true, "[URI协议] 更新失败: {}", e);
+            logging!(error, Type::Config, true, "[URL协议-更新配置] 更新失败: {}", e);
             Err(e)
         }
         Err(_) => {
             let error_msg = "更新配置超时，请检查网络连接";
-            logging!(error, Type::Config, true, "[URI协议] 更新超时(60秒): {}", url);
+            logging!(error, Type::Config, true, "[URL协议-更新配置] 更新超时 60 秒: {}", url);
             Err(anyhow::anyhow!(error_msg))
         }
     }
@@ -1029,6 +1029,8 @@ pub async fn restore_public_dns() {
 /// - 自动激活最新的代理配置
 /// 
 pub async fn auto_import_startup_urls() {
+    logging!(info, Type::Config, true, "[启动时自动导入] 准备开始自动导入配置");
+
     // 提取所需的配置值，避免跨await持有锁
     let (enable_startup_import, urls) = {
         let verge = Config::verge();
@@ -1049,17 +1051,17 @@ pub async fn auto_import_startup_urls() {
     
     // 检查是否启用了启动时自动导入
     if !enable_startup_import {
-        logging!(debug, Type::Config, true, "启动时自动导入功能未启用");
+        logging!(warn, Type::Config, true, "[启动时自动导入] 启动时自动导入功能未启用");
         return;
     }
 
     // 检查URL列表
     if urls.is_empty() {
-        logging!(debug, Type::Config, true, "没有配置启动时自动导入的URL");
+        logging!(warn, Type::Config, true, "[启动时自动导入] 没有配置启动时自动导入的 url");
         return;
     }
 
-    logging!(info, Type::Config, true, "开始启动时自动导入订阅，共{}个URL", urls.len());
+    logging!(info, Type::Config, true, "[启动时自动导入] 开始导入订阅，共 {} 个 url", urls.len());
 
     let mut success_count = 0;
     let mut failed_count = 0;
@@ -1070,7 +1072,7 @@ pub async fn auto_import_startup_urls() {
             continue;
         }
 
-        logging!(info, Type::Config, true, "正在导入第{}个订阅: {}", index + 1, url);
+        logging!(info, Type::Config, true, "[启动时自动导入] 正在导入第 {} 个订阅: {}", index + 1, url);
         
         // 尝试导入，单个url最多重试2次
         let mut retry_count = 0;
@@ -1079,7 +1081,7 @@ pub async fn auto_import_startup_urls() {
         loop {
             match import_subscription_from_url(url.clone(), None).await {
                 Ok(uid) => {
-                    logging!(info, Type::Config, true, "成功导入订阅: {} (UID: {})", url, uid);
+                    logging!(info, Type::Config, true, "[启动时自动导入] 成功导入订阅: {} (UID: {})", url, uid);
                     success_count += 1;
                     last_successful_uid = Some(uid);
                     break;
@@ -1087,11 +1089,11 @@ pub async fn auto_import_startup_urls() {
                 Err(e) => {
                     retry_count += 1;
                     if retry_count <= max_retries {
-                        logging!(warn, Type::Config, true, "导入订阅失败，第{}次重试: {} - {}", retry_count, url, e);
+                        logging!(warn, Type::Config, true, "[启动时自动导入] 导入订阅失败，第 {} 次重试: {} - {}", retry_count, url, e);
                         // 等待1秒后重试
                         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                     } else {
-                        logging!(error, Type::Config, true, "导入订阅最终失败: {} - {}", url, e);
+                        logging!(error, Type::Config, true, "[启动时自动导入] 导入订阅最终失败: {} - {}", url, e);
                         failed_count += 1;
                         break;
                     }
@@ -1101,19 +1103,19 @@ pub async fn auto_import_startup_urls() {
     }
 
     if success_count > 0 || failed_count > 0 {
-        let summary = format!("启动导入完成: 成功{}个, 失败{}个", success_count, failed_count);
+        let summary = format!("[启动时自动导入] 导入完成: 成功 {} 个, 失败 {} 个", success_count, failed_count);
         logging!(info, Type::Config, true, "{}", summary);
     }
 
     // 处理导入成功后的逻辑
     if last_successful_uid.is_some() {
         if let Some(uid) = last_successful_uid {
-            logging!(info, Type::Config, true, "准备处理最新导入的配置: {}", uid);
+            logging!(info, Type::Config, true, "[启动时自动导入] 准备处理最新导入的配置: {}", uid);
             
             // Windows端首次启动特殊处理
             #[cfg(target_os = "windows")]
             if is_first_startup {
-                logging!(info, Type::Config, true, "Windows端首次启动，导入配置完成后将重启应用");
+                logging!(info, Type::Config, true, "[启动时自动导入] Windows 端首次启动，导入配置完成后将重启应用");
                 
                 // 更新首次启动标记
                 let verge_patch = crate::config::IVerge {
@@ -1123,26 +1125,25 @@ pub async fn auto_import_startup_urls() {
                 Config::verge().draft_mut().patch_config(verge_patch);
                 Config::verge().apply();
                 let _ = Config::verge().data_mut().save_file();
-                logging!(info, Type::Config, true, "已标记为非首次启动");
+                logging!(info, Type::Config, true, "[启动时自动导入] 已标记 is_first_startup 为 false");
                 
                 // 延迟重启应用
                 AsyncHandler::spawn(move || async move {
                     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                    logging!(info, Type::Config, true, "Windows端首次启动配置导入完成，即将重启应用");
                     
                     // 重启前关闭内置服务器释放端口
-                    logging!(info, Type::Config, true, "重启前关闭内置服务器...");
+                    logging!(info, Type::Config, true, "[启动时自动导入] 重启前关闭内置服务器...");
                     server::shutdown_embed_server();
                     
                     // 等待服务器完全关闭
                     tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-                    logging!(info, Type::Config, true, "内置服务器关闭完成，准备重启应用");
+                    logging!(info, Type::Config, true, "[启动时自动导入] 内置服务器关闭完成，准备重启应用");
                     
                     if let Some(app_handle) = handle::Handle::global().app_handle() {
-                        logging!(info, Type::Config, true, "获取到应用句柄，即将重启应用");
+                        logging!(info, Type::Config, true, "[启动时自动导入] 获取到应用句柄，即将重启应用");
                         tauri::process::restart(&app_handle.env());
                     } else {
-                        logging!(error, Type::Config, true, "无法获取应用句柄，重启失败");
+                        logging!(error, Type::Config, true, "[启动时自动导入] 无法获取应用句柄，重启失败");
                     }
                 });
                 
@@ -1152,27 +1153,27 @@ pub async fn auto_import_startup_urls() {
             // 延迟执行配置切换，确保核心已完全启动
             let switch_uid = uid.clone();
             AsyncHandler::spawn(move || async move {
-                logging!(info, Type::Config, true, "启动异步配置切换任务: {}", switch_uid);
+                logging!(info, Type::Config, true, "[启动时自动导入] 启动异步配置切换任务: {}", switch_uid);
 
                 // 记录初始状态
                 let initial_core_mode = CoreManager::global().get_running_mode();
-                logging!(info, Type::Config, true, "异步任务开始时核心状态: {:?}", initial_core_mode);
+                logging!(info, Type::Config, true, "[启动时自动导入] 异步任务开始时核心状态: {:?}", initial_core_mode);
                 
                 // 等待核心启动完成
                 wait_for_core_ready().await;
                 
-                logging!(info, Type::Config, true, "核心已就绪，开始切换到配置: {}", switch_uid);
+                logging!(info, Type::Config, true, "[启动时自动导入] 核心已就绪，开始切换到配置: {}", switch_uid);
                 
                 match switch_to_profile_with_retry(switch_uid.clone(), 3).await {
                     Ok(_) => {
-                        logging!(info, Type::Config, true, "成功切换到配置: {}", switch_uid);
+                        logging!(info, Type::Config, true, "[启动时自动导入] 成功切换到配置: {}", switch_uid);
                         
                         // 自动开启系统代理
                         if let Err(e) = auto_enable_system_proxy_after_import().await {
-                            logging!(warn, Type::Config, true, "自动开启系统代理失败: {}", e);
+                            logging!(warn, Type::Config, true, "[启动时自动导入] 自动开启系统代理失败: {}", e);
                         }
                         // 使用统一的UI刷新函数
-                        logging!(info, Type::Config, true, "准备刷新配置切换后的界面");
+                        logging!(info, Type::Config, true, "[启动时自动导入] 准备刷新配置切换后的界面");
                         // 配置切换后刷新：Clash界面 + Verge界面 + 托盘菜单，延迟100ms
                         refresh_ui_after_config_change(
                             true,  // refresh_clash: 刷新代理列表
@@ -1183,20 +1184,20 @@ pub async fn auto_import_startup_urls() {
                         );
                     }
                     Err(e) => {
-                        logging!(error, Type::Config, true, "切换到配置失败: {} - {}", switch_uid, e);
+                        logging!(error, Type::Config, true, "[启动时自动导入] 切换到配置失败: {} - {}", switch_uid, e);
                     }
                 }
             });
         }
     }
 
-    logging!(info, Type::Config, true, "启动时自动导入订阅完成");
+    logging!(info, Type::Config, true, "[启动时自动导入] 启动时自动导入订阅完成");
 }
 
 /// 从URL导入订阅配置
 /// 复用resolve_scheme中的逻辑，但简化为直接处理URL
 async fn import_subscription_from_url(url: String, name: Option<String>) -> Result<String> {
-    logging!(info, Type::Config, true, "开始从URL导入订阅: {}", url);
+    logging!(info, Type::Config, true, "准备开始从URL导入订阅: {}", url);
 
     // 检查是否已存在相同URL的订阅
     let existing_uid = {
@@ -1206,7 +1207,7 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
             for item in items {
                 if let Some(existing_url) = &item.url {
                     if existing_url == &url {
-                        logging!(info, Type::Config, true, "订阅URL已存在，跳过导入: {}", url);
+                        logging!(warn, Type::Config, true, "订阅URL已存在，跳过导入: {}", url);
                         if let Some(uid) = &item.uid {
                             return Ok(uid.clone());
                         }
@@ -1248,12 +1249,12 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
                         logging!(info, Type::Config, true, "验证配置导入成功，UID: {}", uid);
                     }
                     Err(e) => {
-                        logging!(warn, Type::Config, true, "配置导入后验证失败，尝试使用data_ref: {} - {}", uid, e);
+                        logging!(warn, Type::Config, true, "配置导入后验证失败，尝试使用 data_ref: {} - {}", uid, e);
                         // 如果latest_ref找不到，尝试直接从data_ref查找
                         let profiles_data = profiles_config.data_ref();
                         match profiles_data.get_item(&uid) {
                             Ok(_) => {
-                                logging!(info, Type::Config, true, "在data_ref中找到配置，UID: {}", uid);
+                                logging!(info, Type::Config, true, "在 data_ref 中找到配置，UID: {}", uid);
                             }
                             Err(e2) => {
                                 logging!(error, Type::Config, true, "配置导入验证完全失败: {} - {}", uid, e2);
@@ -1285,7 +1286,7 @@ async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<(
     while attempts < max_retries {
         attempts += 1;
         
-        logging!(info, Type::Config, true, "尝试切换配置 (第{}次): {}", attempts, uid);
+        logging!(info, Type::Config, true, "尝试切换配置 (第 {} 次): {}", attempts, uid);
         
         // 在每次尝试前检查核心状态
         let core_mode = CoreManager::global().get_running_mode();
@@ -1293,7 +1294,7 @@ async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<(
         
         match switch_to_profile(uid.clone()).await {
             Ok(_) => {
-                logging!(info, Type::Config, true, "配置切换成功 (第{}次尝试): {}", attempts, uid);
+                logging!(info, Type::Config, true, "配置切换成功 (第 {} 次尝试): {}", attempts, uid);
                 
                 // 验证切换结果
                 {
@@ -1307,12 +1308,12 @@ async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<(
             }
             Err(e) => {
                 last_error = Some(e);
-                logging!(warn, Type::Config, true, "配置切换失败 (第{}次尝试): {} - {}", attempts, uid, last_error.as_ref().unwrap());
+                logging!(warn, Type::Config, true, "配置切换失败 (第 {} 次尝试): {} - {}", attempts, uid, last_error.as_ref().unwrap());
                 
                 if attempts < max_retries {
                     // 等待一段时间后重试
                     let delay = std::time::Duration::from_secs(1 * attempts as u64);
-                    logging!(info, Type::Config, true, "等待{}秒后重试...", delay.as_secs());
+                    logging!(info, Type::Config, true, "等待 {} 秒后重试", delay.as_secs());
                     tokio::time::sleep(delay).await;
                 } else {
                     logging!(error, Type::Config, true, "已达到最大重试次数: {}", max_retries);
@@ -1323,7 +1324,7 @@ async fn switch_to_profile_with_retry(uid: String, max_retries: u32) -> Result<(
     
     // 所有重试都失败了
     let final_error = last_error.unwrap_or_else(|| anyhow::anyhow!("未知错误"));
-    logging!(error, Type::Config, true, "配置切换最终失败，已重试{}次: {} - {}", max_retries, uid, final_error);
+    logging!(error, Type::Config, true, "配置切换最终失败，已重试 {} 次: {} - {}", max_retries, uid, final_error);
     Err(final_error)
 }
 
@@ -1333,7 +1334,7 @@ async fn switch_to_profile(uid: String) -> Result<()> {
     use crate::config::IProfiles;
     use crate::cmd::profile::patch_profiles_config;
     
-    logging!(info, Type::Config, true, "开始切换到配置: {}", uid);
+    logging!(info, Type::Config, true, "准备切换到配置: {}", uid);
     
     // 检查配置是否存在，使用双重检查机制
     {
@@ -1344,12 +1345,12 @@ async fn switch_to_profile(uid: String) -> Result<()> {
                 logging!(info, Type::Config, true, "找到目标配置: name={:?}, file={:?}", item.name, item.file);
             }
             Err(e) => {
-                logging!(warn, Type::Config, true, "在latest_ref中未找到配置: {} - {}, 尝试data_ref", uid, e);
+                logging!(warn, Type::Config, true, "在 latest_ref 中未找到配置: {} - {}, 尝试 data_ref", uid, e);
                 // 如果在latest_ref中找不到，尝试在data_ref中查找
                 let profiles_data = profiles_config.data_ref();
                 match profiles_data.get_item(&uid) {
                     Ok(item) => {
-                        logging!(info, Type::Config, true, "在data_ref中找到目标配置: name={:?}, file={:?}", item.name, item.file);
+                        logging!(info, Type::Config, true, "在 data_ref 中找到目标配置: name={:?}, file={:?}", item.name, item.file);
                     }
                     Err(e2) => {
                         logging!(error, Type::Config, true, "配置完全不存在: {} - latest_ref: {}, data_ref: {}", uid, e, e2);
@@ -1371,7 +1372,7 @@ async fn switch_to_profile(uid: String) -> Result<()> {
     // 如果当前配置与目标配置相同，跳过切换
     if let Some(ref current) = current_uid {
         if current == &uid {
-            logging!(info, Type::Config, true, "当前配置与目标配置相同 ({}), 跳过配置切换", uid);
+            logging!(warn, Type::Config, true, "当前配置与目标配置相同 ({}), 跳过配置切换", uid);
             return Ok(());
         }
     }
@@ -1406,7 +1407,7 @@ async fn wait_for_core_ready() {
     let check_interval = 1000; // 每1000ms检查一次
     let mut elapsed = 0;
     
-    logging!(info, Type::Config, true, "等待核心启动完成...");
+    logging!(info, Type::Config, true, "等待核心启动完成");
     
     while elapsed < max_wait_time {
         let core_running = CoreManager::global().get_running_mode() != RunningMode::NotRunning;
@@ -1416,7 +1417,7 @@ async fn wait_for_core_ready() {
         
         if core_running {
             // 核心已启动，再等待一小段时间确保IPC连接建立
-            logging!(info, Type::Config, true, "核心已启动(模式: {:?})，等待IPC连接建立...", running_mode);
+            logging!(info, Type::Config, true, "核心已启动(模式: {:?})，等待 IPC 连接建立", running_mode);
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             
             // 测试IPC连接是否可用
@@ -1424,10 +1425,10 @@ async fn wait_for_core_ready() {
                 logging!(info, Type::Config, true, "核心连接测试成功，核心已完全就绪");
                 return;
             } else {
-                logging!(warn, Type::Config, true, "核心连接测试失败，继续等待...");
+                logging!(warn, Type::Config, true, "核心连接测试失败，继续等待");
             }
         } else {
-            logging!(debug, Type::Config, true, "核心尚未启动，继续等待... (已等待{}ms)", elapsed);
+            logging!(debug, Type::Config, true, "核心尚未启动，继续等待(已等待 {} ms)", elapsed);
         }
         
         tokio::time::sleep(tokio::time::Duration::from_millis(check_interval)).await;
@@ -1435,26 +1436,26 @@ async fn wait_for_core_ready() {
         
         // 每5秒输出一次等待状态
         if elapsed % 5000 == 0 {
-            logging!(info, Type::Config, true, "仍在等待核心启动... (已等待{}秒)", elapsed / 1000);
+            logging!(info, Type::Config, true, "仍在等待核心启动(已等待 {} 秒)", elapsed / 1000);
         }
     }
     
-    logging!(warn, Type::Config, true, "等待核心启动超时({}秒)，继续执行配置切换", max_wait_time / 1000);
+    logging!(warn, Type::Config, true, "等待核心启动超时({} 秒)，继续执行配置切换", max_wait_time / 1000);
 }
 
 /// 测试核心连接是否可用
 async fn test_core_connection() -> bool {
-    logging!(debug, Type::Config, true, "开始测试核心连接...");
+    logging!(debug, Type::Config, true, "开始测试核心连接");
     
     // 检查IPC路径
     let ipc_path_result = crate::utils::dirs::ipc_path();
     match &ipc_path_result {
         Ok(path) => {
-            logging!(debug, Type::Config, true, "测试连接使用IPC路径: {:?}", path);
+            logging!(debug, Type::Config, true, "测试连接使用 IPC 路径: {:?}", path);
             
             // 检查socket文件是否存在
             if path.exists() {
-                logging!(debug, Type::Config, true, "IPC socket文件存在");
+                logging!(debug, Type::Config, true, "IPC socket 文件存在");
                 
                 // 检查文件权限（Unix系统）
                 #[cfg(unix)]
@@ -1462,20 +1463,20 @@ async fn test_core_connection() -> bool {
                     use std::os::unix::fs::PermissionsExt;
                     if let Ok(metadata) = std::fs::metadata(path) {
                         let permissions = metadata.permissions();
-                        logging!(debug, Type::Config, true, "IPC socket权限: {:o}", permissions.mode());
+                        logging!(debug, Type::Config, true, "IPC socket 权限: {:o}", permissions.mode());
                     }
                 }
             } else {
-                logging!(warn, Type::Config, true, "IPC socket文件不存在: {:?}", path);
+                logging!(warn, Type::Config, true, "IPC socket 文件不存在: {:?}", path);
             }
         }
         Err(e) => {
-            logging!(error, Type::Config, true, "获取IPC路径失败: {}", e);
+            logging!(error, Type::Config, true, "获取 IPC 路径失败: {}", e);
         }
     }
     
     // 尝试获取代理信息来测试IPC连接
-    logging!(debug, Type::Config, true, "尝试通过IPC获取代理信息...");
+    logging!(info, Type::Config, true, "尝试通过 IPC 获取代理信息");
     match tokio::time::timeout(
         tokio::time::Duration::from_secs(3),
         IpcManager::global().get_proxies()
@@ -1486,7 +1487,7 @@ async fn test_core_connection() -> bool {
             } else {
                 0
             };
-            logging!(info, Type::Config, true, "核心连接测试成功，获取到代理对象包含{}个字段", proxy_count);
+            logging!(info, Type::Config, true, "核心连接测试成功，获取到代理对象包含 {} 个字段", proxy_count);
             true
         }
         Ok(Err(e)) => {
@@ -1494,20 +1495,19 @@ async fn test_core_connection() -> bool {
             false
         }
         Err(_) => {
-            logging!(warn, Type::Config, true, "核心连接测试超时(3秒)");
+            logging!(warn, Type::Config, true, "核心连接测试超时 3 秒");
             false
         }
     }
 }
 
-/// 启动时自动启用跟随系统启动功能
-/// 每次应用启动时检查并自动设置跟随系统启动功能
+/// 每次应用启动时检查并开启跟随系统启动功能
 async fn auto_enable_autostart_on_system_startup() -> Result<()> {
-    logging!(info, Type::Setup, true, "检查并自动启用跟随系统启动功能...");
-    
+    logging!(info, Type::Setup, true, "[启动时开启跟随系统启动] 准备打开跟随系统启动功能");
+
     // 使用 scopeguard 确保错误不影响启动流程
     let _guard = scopeguard::guard((), |_| {
-        logging!(trace, Type::Setup, true, "自动启用跟随系统启动功能检查完成");
+        logging!(debug, Type::Setup, true, "[启动时开启跟随系统启动] 跟随系统启动功能检查完成");
     });
     
     // 获取当前跟随系统启动状态
@@ -1517,7 +1517,7 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
     
     // 如果已经启用，跳过设置
     if current_state {
-        logging!(info, Type::Setup, true, "跟随系统启动功能已启用，跳过自动设置");
+        logging!(warn, Type::Setup, true, "[启动时开启跟随系统启动] 跟随系统启动功能已启用，跳过设置");
         return Ok(());
     }
     
@@ -1542,13 +1542,13 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
             warn,
             Type::Setup,
             true,
-            "当前平台不支持自动启用跟随系统启动功能"
+            "[启动时开启跟随系统启动] 当前平台不支持跟随系统启动功能"
         );
         return Ok(());
     }
     
     // 自动启用跟随系统启动
-    logging!(info, Type::Setup, true, "自动启用跟随系统启动功能...");
+    logging!(info, Type::Setup, true, "[启动时开启跟随系统启动] 开启跟随系统启动功能");
     
     // 使用现有的配置更新机制
     let patch = IVerge {
@@ -1557,14 +1557,14 @@ async fn auto_enable_autostart_on_system_startup() -> Result<()> {
     };
     match feat::patch_verge(patch, false).await {
         Ok(_) => {
-            logging!(info, Type::Setup, true, "跟随系统启动功能已自动启用");
+            logging!(info, Type::Setup, true, "[启动时开启跟随系统启动] 跟随系统启动功能已开启");
         }
         Err(e) => {
             logging!(
-                warn,
+                error,
                 Type::Setup,
                 true,
-                "自动启用跟随系统启动功能失败，但不影响应用启动: {}",
+                "[启动时开启跟随系统启动] 开启跟随系统启动功能失败: {}",
                 e
             );
             // 返回错误，但在调用处会被捕获并记录，不会中断启动
@@ -1628,7 +1628,7 @@ fn check_platform_autostart_support() -> bool {
             warn,
             Type::Setup,
             true,
-            "未知平台，不支持自动启用跟随系统启动功能"
+            "未知平台，不支持跟随系统启动功能"
         );
         false
     }
@@ -1674,7 +1674,7 @@ fn check_platform_autostart_support() -> bool {
 /// - 减少用户手动操作步骤
 /// 
 async fn auto_enable_system_proxy_after_import() -> Result<()> {
-    logging!(info, Type::Config, true, "开始自动启用系统代理...");
+    logging!(info, Type::Config, true, "[启动时开启系统代理] 准备打开系统代理");
     
     // 检查当前系统代理状态
     let current_system_proxy_enabled = {
@@ -1685,11 +1685,11 @@ async fn auto_enable_system_proxy_after_import() -> Result<()> {
     
     // 如果系统代理已经启用，跳过设置
     if current_system_proxy_enabled {
-        logging!(info, Type::Config, true, "系统代理已启用，跳过自动设置");
+        logging!(warn, Type::Config, true, "[启动时开启系统代理] 系统代理已启动，跳过自动设置");
         return Ok(());
     }
     
-    logging!(info, Type::Config, true, "系统代理未启用，开始自动启用...");
+    logging!(info, Type::Config, true, "[启动时开启系统代理] 系统代理未启动，正在启动");
     
     // 使用现有的配置更新机制启用系统代理
     let patch = IVerge {
@@ -1699,12 +1699,12 @@ async fn auto_enable_system_proxy_after_import() -> Result<()> {
     
     match feat::patch_verge(patch, false).await {
         Ok(_) => {
-            logging!(info, Type::Config, true, "系统代理已自动启用");
+            logging!(info, Type::Config, true, "[启动时开启系统代理] 系统代理已启动");
             Ok(())
         }
         Err(e) => {
-            logging!(error, Type::Config, true, "自动启用系统代理失败: {}", e);
-            Err(anyhow::anyhow!("自动启用系统代理失败: {}", e))
+            logging!(error, Type::Config, true, "[启动时开启系统代理] 启动系统代理失败: {}", e);
+            Err(anyhow::anyhow!("[启动时开启系统代理] 启动系统代理失败: {}", e))
         }
     }
 }
