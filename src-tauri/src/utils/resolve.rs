@@ -225,8 +225,8 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
         );
     }
 
-    // // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
-    // auto_import_startup_urls().await;
+    // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
+    auto_import_startup_urls().await;
 
     let elapsed = start_time.elapsed();
     logging!(

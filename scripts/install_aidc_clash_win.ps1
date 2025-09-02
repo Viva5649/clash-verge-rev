@@ -1,5 +1,9 @@
 ﻿# update-clash-verge.ps1
-$DownloadUrl = "https://lzd-client-model.oss-ap-southeast-1.aliyuncs.com/aidc_clash/aidc_clash_202509012059.zip"
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$DownloadUrl = "",
+)
+
 $InstallPath = "C:\Program Files\AIDC\ClashVergeRev"
 $ExecutableName = "clash-verge.exe"
 $TimeoutSeconds = 1800
@@ -16,10 +20,16 @@ function Write-Log {
 
 try {
     Write-Log "开始自动更新 Clash Verge Rev..."
+    
+    Write-Log "客户端下载地址: $DownloadUrl"
 
     # --- 关闭系统代理
     Write-Log "关闭系统代理..."
-    Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=false"
+    try {
+        Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=false" -ErrorAction SilentlyContinue
+    } catch {
+        Write-Log "关闭系统代理失败，继续执行..." "WARN"
+    }
     
     # 清理现有进程和安装
     Write-Log "正在清理现有进程和安装..."
