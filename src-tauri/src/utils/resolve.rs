@@ -1234,6 +1234,36 @@ async fn import_subscription_from_url(url: String, name: Option<String>) -> Resu
             };
             // 添加到配置中
             let _ = wrap_err!(Config::profiles().data_mut().append_item(item));
+            
+            // 确保配置已经保存并可以被读取
+            // 强制刷新配置状态，避免Draft机制导致的时序问题
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            
+            // 验证配置是否已经成功添加
+            {
+                let profiles_config = Config::profiles();
+                let profiles = profiles_config.latest_ref();
+                match profiles.get_item(&uid) {
+                    Ok(_) => {
+                        logging!(info, Type::Config, true, "验证配置导入成功，UID: {}", uid);
+                    }
+                    Err(e) => {
+                        logging!(warn, Type::Config, true, "配置导入后验证失败，尝试使用data_ref: {} - {}", uid, e);
+                        // 如果latest_ref找不到，尝试直接从data_ref查找
+                        let profiles_data = profiles_config.data_ref();
+                        match profiles_data.get_item(&uid) {
+                            Ok(_) => {
+                                logging!(info, Type::Config, true, "在data_ref中找到配置，UID: {}", uid);
+                            }
+                            Err(e2) => {
+                                logging!(error, Type::Config, true, "配置导入验证完全失败: {} - {}", uid, e2);
+                                return Err(anyhow::anyhow!("配置导入后无法找到: {}", uid));
+                            }
+                        }
+                    }
+                }
+            }
+            
             logging!(info, Type::Config, true, "成功导入订阅配置，UID: {}", uid);
             Ok(uid)
         }
@@ -1305,7 +1335,7 @@ async fn switch_to_profile(uid: String) -> Result<()> {
     
     logging!(info, Type::Config, true, "开始切换到配置: {}", uid);
     
-    // 检查配置是否存在
+    // 检查配置是否存在，使用双重检查机制
     {
         let profiles_config = Config::profiles();
         let profiles = profiles_config.latest_ref();
@@ -1314,8 +1344,18 @@ async fn switch_to_profile(uid: String) -> Result<()> {
                 logging!(info, Type::Config, true, "找到目标配置: name={:?}, file={:?}", item.name, item.file);
             }
             Err(e) => {
-                logging!(error, Type::Config, true, "配置不存在: {} - {}", uid, e);
-                return Err(e);
+                logging!(warn, Type::Config, true, "在latest_ref中未找到配置: {} - {}, 尝试data_ref", uid, e);
+                // 如果在latest_ref中找不到，尝试在data_ref中查找
+                let profiles_data = profiles_config.data_ref();
+                match profiles_data.get_item(&uid) {
+                    Ok(item) => {
+                        logging!(info, Type::Config, true, "在data_ref中找到目标配置: name={:?}, file={:?}", item.name, item.file);
+                    }
+                    Err(e2) => {
+                        logging!(error, Type::Config, true, "配置完全不存在: {} - latest_ref: {}, data_ref: {}", uid, e, e2);
+                        return Err(anyhow::anyhow!("配置不存在: {}", uid));
+                    }
+                }
             }
         }
     }
