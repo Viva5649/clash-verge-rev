@@ -225,8 +225,8 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
         );
     }
 
-    // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
-    auto_import_startup_urls().await;
+    // // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
+    // auto_import_startup_urls().await;
 
     let elapsed = start_time.elapsed();
     logging!(
@@ -687,21 +687,23 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                     .map(|(_, value)| percent_decode_str(&value).decode_utf8_lossy().to_string());
                 if let Some(url) = import_url {
                     logging!(info, Type::Config, true, "[URL协议] 导入配置 url: [{}]", url);
+                    
                     // 获取可选的配置名称参数
                     let config_name = link_parsed
                         .query_pairs()
                         .find(|(key, _)| key == "name")
                         .map(|(_, value)| value.into_owned());
                     
-                    // 执行配置导入
-                    match handle_import_action(url, config_name).await {
-                        Ok(uid) => {
-                            logging!(info, Type::Config, true, "[URL协议] 导入配置成功，UID: {}", uid);
+                    AsyncHandler::spawn(move || async move {
+                        match handle_import_action(url.clone(), config_name).await {
+                            Ok(uid) => {
+                                logging!(info, Type::Config, true, "[URL协议] 异步导入配置成功，UID: {}", uid);
+                            }
+                            Err(e) => {
+                                logging!(error, Type::Config, true, "[URL协议] 异步导入配置失败: {} - {}", url, e);
+                            }
                         }
-                        Err(e) => {
-                            logging!(error, Type::Config, true, "[URL协议] 导入配置失败: {}", e);
-                        }
-                    }
+                    });
                     return Ok(());
                 } else {
                     logging!(error, Type::Config, true, "[URL协议] 配置缺少 url 参数");
@@ -719,15 +721,16 @@ pub async fn resolve_scheme(param: String) -> Result<()> {
                 if let Some(url) = update_url {
                     logging!(info, Type::Config, true, "[URL协议]准备更新配置，URL: {}", url);
                     
-                    // 执行配置更新
-                    match handle_update_action(url).await {
-                        Ok(uid) => {
-                            logging!(info, Type::Config, true, "[URL协议] 更新配置成功，UID: {}", uid);
+                    AsyncHandler::spawn(move || async move {
+                        match handle_update_action(url).await {
+                            Ok(uid) => {
+                                logging!(info, Type::Config, true, "[URL协议] 更新配置成功，UID: {}", uid);
+                            }
+                            Err(e) => {
+                                logging!(error, Type::Config, true, "[URL协议] 更新配置失败: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            logging!(error, Type::Config, true, "[URL协议] 更新配置失败: {}", e);
-                        }
-                    }
+                    });
                     return Ok(());
                 } else {
                     logging!(error, Type::Config, true, "[URL协议] 配置缺少url参数");
@@ -796,11 +799,20 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
     
     // 使用超时保护避免长时间阻塞
     let import_result = tokio::time::timeout(
-        Duration::from_secs(60), // 60秒超时
+        Duration::from_secs(120), // 120秒超时
         async {
             let uid = import_subscription_from_url(url.clone(), name).await?;
             
             logging!(info, Type::Config, true, "[URL协议-导入配置] 配置导入成功，UID: {}", uid);
+
+            // 记录初始状态
+            let initial_core_mode = CoreManager::global().get_running_mode();
+            logging!(info, Type::Config, true, "[URL协议-导入配置] 切换配置之前的核心状态: {:?}", initial_core_mode);
+            
+            // 等待核心启动完成
+            wait_for_core_ready().await;
+            
+            logging!(info, Type::Config, true, "[URL协议-导入配置] 核心已就绪，开始切换到配置: {}", uid);
 
             // 使用带重试的配置切换
             match switch_to_profile_with_retry(uid.clone(), 3).await {
@@ -1157,7 +1169,7 @@ pub async fn auto_import_startup_urls() {
 
                 // 记录初始状态
                 let initial_core_mode = CoreManager::global().get_running_mode();
-                logging!(info, Type::Config, true, "[启动时自动导入] 异步任务开始时核心状态: {:?}", initial_core_mode);
+                logging!(info, Type::Config, true, "[启动时自动导入] 切换配置之前的核心状态: {:?}", initial_core_mode);
                 
                 // 等待核心启动完成
                 wait_for_core_ready().await;
