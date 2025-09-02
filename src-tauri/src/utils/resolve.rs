@@ -225,8 +225,11 @@ pub async fn resolve_setup_async(app_handle: &AppHandle) {
         );
     }
 
-    // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
-    auto_import_startup_urls().await;
+    // // 启动时自动导入订阅URL（Windows系统首次执行完会重启应用）
+    // auto_import_startup_urls().await;
+
+    // 尝试开启代理
+    try_enable_system_proxy().await;
 
     let elapsed = start_time.elapsed();
     logging!(
@@ -818,6 +821,21 @@ async fn handle_import_action(url: String, name: Option<String>) -> Result<Strin
             match switch_to_profile_with_retry(uid.clone(), 3).await {
                 Ok(_) => {
                     logging!(info, Type::Config, true, "[URL协议-导入配置] 成功切换到新导入的配置: {}", uid);
+                    
+                    // 自动开启系统代理
+                    if let Err(e) = try_enable_system_proxy().await {
+                        logging!(warn, Type::Config, true, "[URL协议-导入配置] 自动开启系统代理失败: {}", e);
+                    }
+                    // 使用统一的UI刷新函数
+                    logging!(info, Type::Config, true, "[URL协议-导入配置] 准备刷新配置切换后的界面");
+                    // 配置切换后刷新：Clash界面 + Verge界面 + 托盘菜单，延迟100ms
+                    refresh_ui_after_config_change(
+                        false,  // refresh_clash: 刷新代理列表
+                        false,  // refresh_verge: 刷新配置状态
+                        false,  // update_tray_menu: 更新托盘菜单
+                        true, // update_tray_icon: 更新图标
+                        100    // delay_ms: 100ms延迟确保配置应用
+                    );
                 }
                 Err(e) => {
                     logging!(error, Type::Config, true, "[URL协议-导入配置] 自动切换配置失败: {}", e);
@@ -1181,7 +1199,7 @@ pub async fn auto_import_startup_urls() {
                         logging!(info, Type::Config, true, "[启动时自动导入] 成功切换到配置: {}", switch_uid);
                         
                         // 自动开启系统代理
-                        if let Err(e) = auto_enable_system_proxy_after_import().await {
+                        if let Err(e) = try_enable_system_proxy().await {
                             logging!(warn, Type::Config, true, "[启动时自动导入] 自动开启系统代理失败: {}", e);
                         }
                         // 使用统一的UI刷新函数
@@ -1685,8 +1703,8 @@ fn check_platform_autostart_support() -> bool {
 /// - 企业环境下的自动化配置部署
 /// - 减少用户手动操作步骤
 /// 
-async fn auto_enable_system_proxy_after_import() -> Result<()> {
-    logging!(info, Type::Config, true, "[启动时开启系统代理] 准备打开系统代理");
+async fn try_enable_system_proxy() -> Result<()> {
+    logging!(info, Type::Config, true, "[开启系统代理] 准备打开系统代理");
     
     // 检查当前系统代理状态
     let current_system_proxy_enabled = {
@@ -1697,11 +1715,11 @@ async fn auto_enable_system_proxy_after_import() -> Result<()> {
     
     // 如果系统代理已经启用，跳过设置
     if current_system_proxy_enabled {
-        logging!(warn, Type::Config, true, "[启动时开启系统代理] 系统代理已启动，跳过自动设置");
+        logging!(warn, Type::Config, true, "[开启系统代理] 系统代理已启动，跳过自动设置");
         return Ok(());
     }
     
-    logging!(info, Type::Config, true, "[启动时开启系统代理] 系统代理未启动，正在启动");
+    logging!(info, Type::Config, true, "[开启系统代理] 系统代理未启动，正在启动");
     
     // 使用现有的配置更新机制启用系统代理
     let patch = IVerge {
@@ -1711,12 +1729,12 @@ async fn auto_enable_system_proxy_after_import() -> Result<()> {
     
     match feat::patch_verge(patch, false).await {
         Ok(_) => {
-            logging!(info, Type::Config, true, "[启动时开启系统代理] 系统代理已启动");
+            logging!(info, Type::Config, true, "[开启系统代理] 系统代理已启动");
             Ok(())
         }
         Err(e) => {
-            logging!(error, Type::Config, true, "[启动时开启系统代理] 启动系统代理失败: {}", e);
-            Err(anyhow::anyhow!("[启动时开启系统代理] 启动系统代理失败: {}", e))
+            logging!(error, Type::Config, true, "[开启系统代理] 启动系统代理失败: {}", e);
+            Err(anyhow::anyhow!("[开启系统代理] 启动系统代理失败: {}", e))
         }
     }
 }

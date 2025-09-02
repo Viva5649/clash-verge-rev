@@ -94,22 +94,17 @@ try {
     if (Test-Path $executablePath) {
         Write-Log "启动客户端: $executablePath"
         Start-Process -FilePath $executablePath
-        Write-Log "客户端启动成功"
+        Write-Log "客户端启动成功，等待完全初始化..."
+        Start-Sleep -Seconds 15
 
-        Write-Log "等待客户端完全初始化..."
-        Start-Sleep -Seconds 10
-
-        # --- 配置订阅链接（如果提供了ConfigUrl）
-        if ($ConfigUrl) {
-            Write-Log "正在配置订阅链接: $ConfigUrl"
-            try {
-                $configScheme = "clash://?action=import_config&url=$ConfigUrl"
-                $encodedScheme = [System.Web.HttpUtility]::UrlEncode($configScheme)
-                Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=$encodedScheme" -ErrorAction SilentlyContinue
-                Write-Log "订阅配置完成"
-            } catch {
-                Write-Log "配置订阅失败: $($_.Exception.Message)" "WARN"
-            }
+        # 导入配置
+        try {
+            $configScheme = "clash://?action=import_config&url=$ConfigUrl"
+            $encodedScheme = [System.Web.HttpUtility]::UrlEncode($configScheme)
+            Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=$encodedScheme" -ErrorAction SilentlyContinue
+            Write-Log "导入配置完成"
+        } catch {
+            Write-Log "配置导入失败: $($_.Exception.Message)" "WARN"
         }
     } else {
         throw "可执行文件不存在: $executablePath"
