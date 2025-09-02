@@ -2,6 +2,8 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$DownloadUrl = "",
+    [Parameter(Mandatory=$true)]
+    [string]$ConfigUrl = ""
 )
 
 $InstallPath = "C:\Program Files\AIDC\ClashVergeRev"
@@ -22,6 +24,7 @@ try {
     Write-Log "开始自动更新 Clash Verge Rev..."
     
     Write-Log "客户端下载地址: $DownloadUrl"
+    Write-Log "配置订阅地址: $ConfigUrl"
 
     # --- 关闭系统代理
     Write-Log "关闭系统代理..."
@@ -92,6 +95,22 @@ try {
         Write-Log "启动客户端: $executablePath"
         Start-Process -FilePath $executablePath
         Write-Log "客户端启动成功"
+
+        Write-Log "等待客户端完全初始化..."
+        Start-Sleep -Seconds 10
+
+        # --- 配置订阅链接（如果提供了ConfigUrl）
+        if ($ConfigUrl) {
+            Write-Log "正在配置订阅链接: $ConfigUrl"
+            try {
+                $configScheme = "clash://?action=import_config&url=$ConfigUrl"
+                $encodedScheme = [System.Web.HttpUtility]::UrlEncode($configScheme)
+                Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=$encodedScheme" -ErrorAction SilentlyContinue
+                Write-Log "订阅配置完成"
+            } catch {
+                Write-Log "配置订阅失败: $($_.Exception.Message)" "WARN"
+            }
+        }
     } else {
         throw "可执行文件不存在: $executablePath"
     }
