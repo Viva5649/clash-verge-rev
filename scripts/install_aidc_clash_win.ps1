@@ -77,7 +77,25 @@ try {
     # 清理临时文件
     if (Test-Path $zipFile) { Remove-Item $zipFile -Force }
     # 下载文件
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipFile -TimeoutSec $TimeoutSeconds
+    try {
+        Write-Log "尝试使用 WebClient 进行下载"
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($DownloadUrl, $zipFile)
+        $webClient.Dispose()
+    } catch {
+        Write-Log "使用 WebClient 失败，回退使用 Invoke-WebRequest"
+        Write-Log "WebClient 错误类型: $($_.Exception.GetType().Name)" "WARN"
+        Write-Log "WebClient 错误信息: $($_.Exception.Message)" "WARN"
+        try {
+            # 命令行里的进度条显示会占用大量 CPU 资源，十分影响下载的整体速度
+            # 显示进度时，下载流程要起码 5 分钟；不显示进度时，下载流程只需要几十秒
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipFile -TimeoutSec $TimeoutSeconds
+            $ProgressPreference = 'Continue'
+        } catch {
+            throw "下载失败"
+        }
+    }
     Write-Log "下载完成: $zipFile"
     
     # --- 解压新版本
