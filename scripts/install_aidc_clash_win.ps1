@@ -97,9 +97,13 @@ try {
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
     # 使用PowerShell 5.0+的Expand-Archive命令解压
     try {
+        # 关闭解压进度显示以提高性能
+        $ProgressPreference = 'SilentlyContinue'
         Expand-Archive -Path $zipFile -DestinationPath $InstallPath -Force
+        $ProgressPreference = 'Continue'
         Write-Log "解压完成"
     } catch {
+        $ProgressPreference = 'Continue'  # 确保在异常情况下也恢复进度显示
         Write-Log "使用Expand-Archive失败，尝试使用Shell.Application" "WARN"
         try {
             # 备用方案：使用COM对象
