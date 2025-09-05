@@ -72,29 +72,22 @@ try {
 
     # --- 准备下载压缩包
     Write-Log "正在下载更新包: $DownloadUrl"
-    $tempDir = [System.IO.Path]::GetTempPath()
+    # 使用PowerShell原生方法获取临时目录
+    $tempDir = $env:TEMP
     $zipFile = Join-Path $tempDir "aidc_clash.zip"
     # 清理临时文件
     if (Test-Path $zipFile) { Remove-Item $zipFile -Force }
     # 下载文件
     try {
-        Write-Log "尝试使用 WebClient 进行下载"
-        $webClient = New-Object System.Net.WebClient
-        $webClient.DownloadFile($DownloadUrl, $zipFile)
-        $webClient.Dispose()
+        Write-Log "开始下载文件到: $zipFile"
+        # 命令行里的进度条显示会占用大量 CPU 资源，十分影响下载的整体速度
+        # 显示进度时，下载流程要起码 5 分钟；不显示进度时，下载流程只需要几十秒
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipFile -TimeoutSec $TimeoutSeconds
+        $ProgressPreference = 'Continue'
     } catch {
-        Write-Log "使用 WebClient 失败，回退使用 Invoke-WebRequest"
-        Write-Log "WebClient 错误类型: $($_.Exception.GetType().Name)" "WARN"
-        Write-Log "WebClient 错误信息: $($_.Exception.Message)" "WARN"
-        try {
-            # 命令行里的进度条显示会占用大量 CPU 资源，十分影响下载的整体速度
-            # 显示进度时，下载流程要起码 5 分钟；不显示进度时，下载流程只需要几十秒
-            $ProgressPreference = 'SilentlyContinue'
-            Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipFile -TimeoutSec $TimeoutSeconds
-            $ProgressPreference = 'Continue'
-        } catch {
-            throw "下载失败"
-        }
+        Write-Log "下载失败: $($_.Exception.Message)" "ERROR"
+        throw "下载失败"
     }
     Write-Log "下载完成: $zipFile"
     
@@ -102,10 +95,24 @@ try {
     Write-Log "正在解压新版本到: $InstallPath"
     # 创建安装目录
     New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
-    # 解压文件
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipFile, $InstallPath)
-    Write-Log "解压完成"
+    # 使用PowerShell 5.0+的Expand-Archive命令解压
+    try {
+        Expand-Archive -Path $zipFile -DestinationPath $InstallPath -Force
+        Write-Log "解压完成"
+    } catch {
+        Write-Log "使用Expand-Archive失败，尝试使用Shell.Application" "WARN"
+        try {
+            # 备用方案：使用COM对象
+            $shell = New-Object -ComObject Shell.Application
+            $zip = $shell.NameSpace($zipFile)
+            $destination = $shell.NameSpace($InstallPath)
+            $destination.CopyHere($zip.Items(), 4)
+            Write-Log "解压完成（使用Shell.Application）"
+        } catch {
+            Write-Log "解压失败: $($_.Exception.Message)" "ERROR"
+            throw "解压失败"
+        }
+    }
     
     # --- 启动客户端
     $executablePath = Join-Path $InstallPath $ExecutableName
