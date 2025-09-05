@@ -20,6 +20,43 @@ function Write-Log {
     Write-Host "[$timestamp] [$Level] $Message"
 }
 
+# 检查系统代理状态函数
+function Check-SystemProxyStatus {
+    try {
+        # 读取注册表中的代理设置
+        $proxyPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        
+        # 检查代理是否启用
+        $proxyEnable = Get-ItemProperty -Path $proxyPath -Name "ProxyEnable" -ErrorAction SilentlyContinue
+        $proxyServer = Get-ItemProperty -Path $proxyPath -Name "ProxyServer" -ErrorAction SilentlyContinue
+        $proxyOverride = Get-ItemProperty -Path $proxyPath -Name "ProxyOverride" -ErrorAction SilentlyContinue
+        
+        Write-Log "=== Windows 系统代理状态 ===" "INFO"
+        
+        if ($proxyEnable -and $proxyEnable.ProxyEnable -eq 1) {
+            Write-Log "代理状态: 已启用" "INFO"
+            if ($proxyServer) {
+                Write-Log "代理服务器: $($proxyServer.ProxyServer)" "INFO"
+            }
+            if ($proxyOverride) {
+                Write-Log "代理例外: $($proxyOverride.ProxyOverride)" "INFO"
+            }
+        } else {
+            Write-Log "代理状态: 已禁用" "INFO"
+        }
+        
+        # 尝试检查自动配置脚本
+        $autoConfigURL = Get-ItemProperty -Path $proxyPath -Name "AutoConfigURL" -ErrorAction SilentlyContinue
+        if ($autoConfigURL -and $autoConfigURL.AutoConfigURL) {
+            Write-Log "自动配置脚本: $($autoConfigURL.AutoConfigURL)" "INFO"
+        }
+        
+        Write-Log "=========================" "INFO"
+    } catch {
+        Write-Log "检查系统代理状态失败: $($_.Exception.Message)" "WARN"
+    }
+}
+
 try {
     Write-Log "开始自动更新 Clash Verge Rev..."
     
@@ -129,6 +166,9 @@ try {
     }
     
     Write-Log "更新完成！"
+    
+    # 检查系统代理状态
+    Check-SystemProxyStatus
     
 } catch {
     Write-Log "更新失败: $($_.Exception.Message)" "ERROR"
