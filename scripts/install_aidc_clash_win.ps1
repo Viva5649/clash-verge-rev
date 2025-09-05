@@ -66,9 +66,9 @@ try {
     # --- 关闭系统代理
     Write-Log "关闭系统代理..."
     try {
-        Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=false" -ErrorAction SilentlyContinue
+        Invoke-WebRequest -Uri "http://127.0.0.1:33331/commands/scheme?param=clash://?enable_system_proxy=false" -UseBasicParsing -ErrorAction SilentlyContinue
     } catch {
-        Write-Log "关闭系统代理失败，继续执行..." "WARN"
+        Write-Log "关闭系统代理失败，错误信息: $($_.Exception.Message)，后续操作继续执行..." "WARN"
     }
     
     # 清理现有进程和安装
@@ -120,7 +120,7 @@ try {
         # 命令行里的进度条显示会占用大量 CPU 资源，十分影响下载的整体速度
         # 显示进度时，下载流程要起码 5 分钟；不显示进度时，下载流程只需要几十秒
         $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipFile -TimeoutSec $TimeoutSeconds
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $zipFile -TimeoutSec $TimeoutSeconds -UseBasicParsing
         $ProgressPreference = 'Continue'
     } catch {
         Write-Log "下载失败: $($_.Exception.Message)" "ERROR"
