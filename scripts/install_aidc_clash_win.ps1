@@ -166,6 +166,9 @@ try {
     }
     
     Write-Log "更新完成！"
+
+    Write-Log "等待代理客户端启动..."
+    Start-Sleep -Seconds 60
     
     # 检查系统代理状态
     Check-SystemProxyStatus
